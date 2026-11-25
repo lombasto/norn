@@ -11,6 +11,9 @@ import { fileURLToPath } from 'node:url';
 import { mkTmp } from './helpers/tmp.mjs';
 import { which } from '../engine/lib/paths.mjs';
 import { parseGuide, walkGuide } from './helpers/guide.mjs';
+import { rustReady, rustInto } from './helpers/rust.mjs';
+
+test.before(rustReady);   // the guide's norn setup builds norn-hook and norn-code: a cold build runs here, never inside the walk's time limit
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const GUIDE = fs.readFileSync(path.join(REPO, 'SETUP.md'), 'utf8');
@@ -20,6 +23,7 @@ test('SETUP.md walks: every guide:run block of a fresh clone succeeds and matche
   const t = mkTmp('meta-guide-');
   const clone = path.join(t, 'norn'), home = path.join(t, 'home'), bin = path.join(t, 'bin'), cfg = path.join(t, 'claude'), repo = path.join(t, 'my-app');
   execFileSync('git', ['clone', '--no-hardlinks', '--quiet', REPO, clone], { stdio: ['ignore', 'ignore', 'pipe'] });
+  rustInto(path.join(clone, 'engine'));   // the clone's own store is empty: the parts built before are put there, as smoke does
   // the guide as committed is what a user gets; the working copy's SETUP.md is the one under test (same file once committed)
   fs.writeFileSync(path.join(clone, 'SETUP.md'), GUIDE);
   for (const d of [home, bin, cfg, repo]) fs.mkdirSync(d, { recursive: true });

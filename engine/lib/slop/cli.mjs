@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { loadRules, slopCheck, gitRun, explainOf, replay } from './check.mjs';
+import { loadRules, slopCheck, gitRun, explainOf, replay, budget, budgetLines } from './check.mjs';
 import { loadState, laneId } from '../records.mjs';
 import { checkBranch, projectSlop } from './runend.mjs';
 import { hostWrite, activeWaivers, covers, findingLine, explainLines, meterSeries, fixOff } from './host.mjs';
@@ -15,10 +15,10 @@ import { dailyReport } from './daily.mjs';
 import { measureDiff } from './measure.mjs';
 import { subdirOf, inDir } from '../monorepo.mjs';
 
-export const SLOP_USAGE = 'usage: norn slop check [--lane L | --diff base..head] [--ci] [--json] | fix [--lane L] | loc [--since YYYY-MM-DD] [--json] | sweep [--json] | meter [--json] | daily | fixtures'
-  + ' | replay <rule> --as <ids,...> [--main REF] [--last N] [--config FILE] [--json]    [--project P | --state D] [--repo DIR]   (check: exit 1 = open BLOCK findings;'
-  + ' --ci skips the rules that read the machine state; fix: applies the fix lists of the rules to the open findings in the worktree, commits nothing; meter: how slopified main is, 0-100 and a band; fixtures: the real tools on the rule fixtures, nightly; replay: a rule beside its new form over the last N merges of main, SPEC 3.2)';
-const FLAGS = { check: ['lane', 'diff', 'ci!', 'json!'], fix: ['lane'], loc: ['since', 'json!'], sweep: ['json!'], meter: ['json!'], daily: [], fixtures: [], replay: ['as', 'main', 'last', 'config', 'json!'] };
+export const SLOP_USAGE = 'usage: norn slop check [--lane L | --diff base..head] [--ci] [--json] | fix [--lane L] | loc [--since YYYY-MM-DD] [--json] | sweep [--json] | meter [--json] | daily | fixtures | replay <rule>'   // R2 reads the verbs from this first line
+  + ' --as <ids,...> [--main REF] [--last N] [--config FILE] [--budget [--ratings FILE]] [--json]    [--project P | --state D] [--repo DIR]   (check: exit 1 = open BLOCK findings;'
+  + ' --ci skips the rules that read the machine state; fix: applies the fix lists of the rules to the open findings in the worktree, commits nothing; meter: how slopified main is, 0-100 and a band; fixtures: the real tools on the rule fixtures, nightly; replay: a rule beside its new form over the last N merges of main, SPEC 3.2; --budget: pass / fail per rule x language against PROVE, the real share from --ratings { fp: real | wrong })';
+const FLAGS = { check: ['lane', 'diff', 'ci!', 'json!'], fix: ['lane'], loc: ['since', 'json!'], sweep: ['json!'], meter: ['json!'], daily: [], fixtures: [], replay: ['as', 'main', 'last', 'config', 'budget!', 'ratings', 'json!'] };
 
 function parse(verb, argv) {
   const spec = [...(FLAGS[verb] || []), 'project', 'state', 'repo'], f = {};
@@ -40,6 +40,7 @@ export function slopCmd(argv, { env = process.env, out = console.log, err = cons
     if (!FLAGS[verb]) throw new Error(verb ? `unknown verb ${verb}` : 'missing verb');
     const pos = verb === 'replay' && argv[1] && !argv[1].startsWith('--') ? argv[1] : null;   // replay's rule id comes first
     f = { ...parse(verb, argv.slice(pos ? 2 : 1)), rule: pos };
+    if (verb === 'replay' && f.ratings && !f.budget) throw new Error('--ratings goes with --budget');
     if (verb === 'replay' && !(f.rule && f.as)) throw new Error('replay wants <rule> --as <ids,...> (the new form: rule or sub-rule ids, LJ/no-console)');
   }
   catch (e) { err('error: ' + e.message); err(SLOP_USAGE); return 2; }
@@ -119,6 +120,11 @@ export function slopCmd(argv, { env = process.env, out = console.log, err = cons
   if (verb === 'replay') {
     const rows = replay({ repo: repoOf(), old: f.rule, as: f.as.split(','), main: f.main || 'HEAD', last: f.last ? Number(f.last) : 50, config: f.config ? fs.readFileSync(f.config, 'utf8') : null, tool: makeTool({ env }) });
     const sum = k => rows.reduce((a, r) => a + r[k].length, 0);
+    if (f.budget) {   // slop-langs S5: the budget instead of the pairing; nothing promotes itself (the controller writes overrides.json)
+      const b = budget(rows, { ratings: f.ratings ? JSON.parse(fs.readFileSync(f.ratings, 'utf8')) : {} });
+      out(f.json ? JSON.stringify(b, null, 1) : [...budgetLines(b), `slop replay ${f.rule} --budget: ${rows.length} merges, ${b.length} rule x language rows`].join('\n'));
+      return 0;
+    }
     if (f.json) out(JSON.stringify(rows, null, 1));
     else for (const r of rows) out([`${r.merge} ${r.subject}`, `  old [${r.old.join(' ')}]  new [${r.new.join(' ')}]`, ...r.missed.map(m => `  MISSED ${m}`), ...r.added.map(a => `  added ${a}`), ...r.unrun.map(u => `  could not run: ${u}`)].join('\n'));
     out(`slop replay ${f.rule} as ${f.as}: ${rows.length} merges; old ${sum('old')}, new ${sum('new')}, missed ${sum('missed')}, added ${sum('added')} (label each by hand), could not run ${sum('unrun')}`);

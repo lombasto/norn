@@ -10,6 +10,9 @@ import { record, loadState, readEvents, recordsFile } from '../engine/lib/record
 import { projectFile, budget0 } from './helpers/dash-fixture.mjs';
 import { loadProject } from '../engine/lib/config.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
+import { rustReady } from './helpers/rust.mjs';
+
+test.before(rustReady);   // the setup walk runs norn setup, which builds norn-hook and norn-code: a cold build runs here, never inside a step's time limit
 
 const META = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'bin', 'norn.mjs');
 const tmp = () => mkTmp('meta-mcp-');

@@ -93,7 +93,8 @@ import { codeCmd } from '../lib/codecli.mjs';
 import { normPath, pathsWarning } from '../lib/declinks.mjs';
 import { findingLine } from '../lib/slop/host.mjs';
 import { doorCheck, doorWhy } from '../lib/slop/door.mjs';
-import { endCheck, slopPrompt } from '../lib/slop/runend.mjs';
+import { endCheck, slopPrompt, projectSlop } from '../lib/slop/runend.mjs';
+import { RUST_PARTS, ensureParts, partsOf, graphReads } from '../lib/rustbin.mjs';
 import { voiceRoute } from '../lib/slop/voice.mjs';
 import { scopeCheck, denyJson } from '../lib/scope.mjs';
 import { dupOf, dupMessage } from '../lib/dupdirs.mjs';
@@ -1950,7 +1951,7 @@ function fixCmd(argv, env, out, err) {
 const DONE_USAGE = 'norn done [--outcome done|stopped|handoff] [--why "<why>" (stopped: required)] [--handoff-file F | --handoff "<text>" (handoff: required)] [--summary "<one line>"] [--look <image> (done: the picture proof of a look item)] [--run RUN-n --state D (default: $META_RUN_ID, $META_RUN_STATE)]'
   + '   (inside a run, as its last step: writes $META_RESULT_DIR = <state>/results/RUN-n/ (result.json, HANDOFF.md); a run that never runs it ends no-result)';
 const fwdSlash = p => String(p).replace(/\\/g, '/');
-function doneCmd(argv, env, out, err) {
+async function doneCmd(argv, env, out, err) {
   try {
     const flags = {};
     for (let i = 0; i < argv.length; i++) {
@@ -1970,7 +1971,7 @@ function doneCmd(argv, env, out, err) {
     if (flags['handoff-file'] !== undefined) { try { handoff = fs.readFileSync(flags['handoff-file'], 'utf8'); } catch (e) { throw new RunError(`--handoff-file ${flags['handoff-file']}: ${e.code || e.message}`); } }
     // SloppaChoppa 2 S2: a DONE is checked in the worker's own session (a fix costs it a few turns; a resume round costs a new process);
     // open BLOCK findings refuse it: the list, no result, exit 4. stopped and handoff are never refused (the run end checks them).
-    if ((flags.outcome ?? 'done') === 'done' && doneSlop(state, run, out, err)) return 4;
+    if ((flags.outcome ?? 'done') === 'done' && await doneSlop(state, run, out, err)) return 4;
     // the supervisor's directory when it is this run's (META_RESULT_DIR), else the state's
     const dir = (env.META_RESULT_DIR && env.META_RUN_ID === run ? env.META_RESULT_DIR : null) || resultDir(state, run);
     const r = writeResult(dir, { run, outcome: flags.outcome, why: flags.why, summary: flags.summary, handoff, look: flags.look });
@@ -1983,9 +1984,26 @@ function doneCmd(argv, env, out, err) {
 }
 // the branch check of a DONE (endCheck: stored, so the run end does not run it again) -> true = refused (the list is printed).
 // The skips are the run end's (supervisor slopEnd); a check that throws does not refuse: the run end checks again and holds the branch.
-function doneSlop(state, run, out, err) {
+// NORN-DONE-FRESH: `norn done` is the engine on PATH (the main checkout's). When the check reads the code graph (rustbin graphReads, the
+// supervisor's condition), norn-code of THIS engine is ensured first: a pull mid-run names a new binary nothing has built yet, and K10
+// would store "could not run". A part that cannot be had refuses the DONE on rustbin's ONE reason and stores no check: a check that
+// cannot run is no pass and no K10 finding. parts / rust: the list and the ensureParts options (tests inject a temp store and cargo)
+export async function doneSlop(state, run, out, err, { parts = null, rust = {} } = {}) {
   const spec = readJsonFile(path.join(state, 'runs', `${run}.spec.json`)), pd = spec.policy?.slop?.project_dir;
   if (spec.kind === 'checkin' || spec.role === 'helper' || spec.readonly || !spec.worktree || !slopOn(spec.policy)) return false;
+  let reads = false;
+  try { reads = graphReads(projectSlop({ projectDir: pd }).rules, spec.worktree); } catch { /* the rules do not load: endCheck below names it */ }
+  if (reads) {
+    const start = p => out(`norn done: building ${RUST_PARTS[p].bin} (${RUST_PARTS[p].why}) for this engine's sources before the branch check; a first build takes minutes`);
+    let r;
+    try { r = await ensureParts(parts ?? partsOf({ parts: ['code'] }), { err, start, ...rust }); }
+    catch (e) { r = { ok: false, why: `the Rust parts could not be checked: ${e.message.split('\n')[0]}` }; }
+    if (!r.ok) {
+      err(r.why);
+      out(`${run} DONE refused: the branch check cannot run (${r.why}). No check is stored and no result written. Make the part buildable and run \`norn done\` again, or end with \`norn done --outcome stopped --why "<the reason>"\`.`);
+      return true;
+    }
+  }
   let c, brief = null;
   try { brief = spec.brief ? fs.readFileSync(spec.brief, 'utf8') : null; } catch { /* the model rules read without it, as at the run end */ }
   try { c = endCheck({ repo: spec.worktree, state, projectDir: pd, voice: spec.policy?.slop?.voice ?? null, brief, lane: spec.lane, run }); }

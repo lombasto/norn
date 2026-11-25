@@ -17,6 +17,8 @@ import { renderTab, loadTab } from '../engine/dash/ui.mjs';
 import { POLICY_DEFAULTS, ROLE_AGENTS, STARTER_CAPS, BASIC_KEYS, SECTIONS, settingsView, starterPolicy } from '../engine/lib/policy.mjs';
 import { getProfile, profilePolicy, profileChanges, COSTS } from '../engine/lib/profiles.mjs';
 
+test.before(rustReady);   // norn setup builds norn-hook and norn-code: a cold build runs here, never inside a step's time limit
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const META = path.join(HERE, '..', 'engine', 'bin', 'norn.mjs');
 const ENGINE_AGENTS = path.join(HERE, '..', 'engine', 'agents');
@@ -25,7 +27,6 @@ const fwd = p => p.split(path.sep).join('/');
 const GIT_DIR = path.dirname(which('git'));
 
 function sandbox({ codex = false } = {}) {
-  rustReady();   // norn setup needs a built norn-hook and norn-code; the sandbox PATH has no cargo
   const t = mkTmp('meta-pnew-');
   const d = { root: path.join(t, 'meta'), home: path.join(t, 'home'), bin: path.join(t, 'bin'), cfg: path.join(t, 'claude-cfg'), t };
   for (const x of [d.root, d.home, d.bin, d.cfg]) fs.mkdirSync(x, { recursive: true });

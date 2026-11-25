@@ -44,7 +44,7 @@ import { sizeOfRun } from './sizing.mjs';
 import { resultDir, resultPath, readResult, writeResult, NO_RESULT } from './result.mjs';
 import { cutoffOf } from './laneout.mjs';
 import { postRunAsks } from './runasks.mjs';
-import { ensureParts, partsOf } from './rustbin.mjs';
+import { ensureParts, partsOf, graphReads } from './rustbin.mjs';
 import { warnsOf } from './codewarn.mjs';
 
 const NORN_BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'norn.mjs');
@@ -597,10 +597,10 @@ function rustParts({ hook = false, code = false, worktree = false }) {
   const work = worktree && !!spec.worktree && spec.kind !== 'checkin' && spec.role !== 'helper' && !spec.readonly;
   return partsOf({ parts: [...(hook ? ['hook'] : []), ...(code ? ['code'] : [])], worktree: work ? spec.worktree : null });
 }
-// the end check reads the code graph when it runs and one of its `imports` rules (K10) has a root this worktree holds
+// the end check reads the code graph when it runs and its rules read it (rustbin graphReads: the one condition, `norn done`'s too)
 function graphRead() {
   if (!slopRuns()) return false;
-  try { return projectSlop({ projectDir: spec.policy?.slop?.project_dir }).rules.some(r => r.kind === 'imports' && r.roots?.some(x => fs.existsSync(path.join(spec.worktree, x)))); }
+  try { return graphReads(projectSlop({ projectDir: spec.policy?.slop?.project_dir }).rules, spec.worktree); }
   catch (e) { logLine(`rust: the slop rules did not load (${e.message.split('\n')[0]}): the check names it`); return false; }
 }
 /** ensureParts with the run log: what was built, cargo's own error output, the ONE reason -> its result (a throw is that reason too) */
