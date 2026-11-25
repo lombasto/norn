@@ -12,7 +12,7 @@ import { ensurePart, partProblem, binOf, ccProblem, CODE_STORE_SCHEMA } from '..
 
 const FIX = path.join(import.meta.dirname, 'fixtures', 'code-graph');
 const built = ensurePart('code', { err: s => process.stderr.write(s + '\n') });
-const git = (cwd, ...a) => { const r = spawnSync('git', ['-c', 'user.email=t@example.invalid', '-c', 'user.name=t', ...a], { cwd, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout; };
+const git = (cwd, ...a) => { const r = spawnSync('git', ['-c', 'user.email=t@example.invalid', '-c', 'user.name=t', ...a], { cwd, encoding: 'utf8', windowsHide: true }); assert.equal(r.status, 0, r.stderr); return r.stdout; };
 /** a fixture committed into its own repo -> { repo, state } */
 function repoOf(lang) {
   const d = mkTmp(`cg-${lang}-`), repo = path.join(d, 'repo');
@@ -21,7 +21,7 @@ function repoOf(lang) {
   git(repo, 'init', '-q'); git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'fixture');
   return { repo, state: path.join(d, 'graph-state') };
 }
-const code = (...a) => { const r = spawnSync(binOf('code'), a, { encoding: 'utf8' }); const j = JSON.parse(r.stdout); assert.ok(j.ok !== false, j.why); return j; };
+const code = (...a) => { const r = spawnSync(binOf('code'), a, { encoding: 'utf8', windowsHide: true }); const j = JSON.parse(r.stdout); assert.ok(j.ok !== false, j.why); return j; };
 const index = ({ repo, state }, ...extra) => code('index', '--repo', repo, '--state', state, ...extra);
 const snapshot = (state, tree) => JSON.parse(fs.readFileSync(path.join(state, 'code', 'graph', 'trees', `v${CODE_STORE_SCHEMA}`, `${tree}.json`), 'utf8'));
 
