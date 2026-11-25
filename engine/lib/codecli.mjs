@@ -70,16 +70,18 @@ function signalsCmd(f, state, { out, err }) {
   }
   const pick = f._.map(x => x.replace(/\\/g, '/').replace(/^\.\//, '')), miss = pick.filter(x => !s.files[x]).length;
   if (f.json) { out(JSON.stringify({ ...head, files: pick.map(file => (s.files[file] ? { file, ...s.files[file] } : { file, missing: 'not in the index' })) })); return miss ? 1 : 0; }
-  for (const file of pick) {
-    const x = s.files[file];
-    if (!x) { out(`${file}: not in the index (new, removed, or the index is older than it)`); continue; }
-    const fx = x.fixes, last = fx?.last[0];
-    out(`${file} · fix first ${x.fix_first ?? 'n/a'} · importance ${x.importance}`);
-    out(`  fixes: ${na ?? `${fx.n_90d} in ${s.limits.fix_short_days} days, ${fx.n_365d} in ${s.window.days} days${last ? `; last ${last.day} ${last.sha.slice(0, 8)} ${last.subject}` : ''}`}`);
-    out(`  changes with: ${x.partners.length ? x.partners.map(p => `${p.file} ${p.shared} shared (${Math.round(100 * p.share)} % of ${x.landings} landings; it has ${p.landings})`).join(', ') : `none over the thresholds (${x.landings} landings)`}`);
-  }
+  for (const file of pick) fileLines(file, s, na).forEach(l => out(l));
   out(stamp);
   return miss ? 1 : 0;
+}
+/** one file's signals in words: the rank line, the fixes line, the partners line */
+function fileLines(file, s, na) {
+  const x = s.files[file];
+  if (!x) return [`${file}: not in the index (new, removed, or the index is older than it)`];
+  const fx = x.fixes, last = fx?.last[0];
+  return [`${file} · fix first ${x.fix_first ?? 'n/a'} · importance ${x.importance}`,
+    `  fixes: ${na ?? `${fx.n_90d} in ${s.limits.fix_short_days} days, ${fx.n_365d} in ${s.window.days} days${last ? `; last ${last.day} ${last.sha.slice(0, 8)} ${last.subject}` : ''}`}`,
+    `  changes with: ${x.partners.length ? x.partners.map(p => `${p.file} ${p.shared} shared (${Math.round(100 * p.share)} % of ${x.landings} landings; it has ${p.landings})`).join(', ') : `none over the thresholds (${x.landings} landings)`}`];
 }
 
 /** `norn code map`: draw (the first map, or the owner's unmetered update) or --refresh (metered) -> exit code (a skipped refresh is 0) */

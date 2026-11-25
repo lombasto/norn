@@ -30,7 +30,7 @@ const DAY = 86400e3, TYPE = /^([a-z]+)(\([^)]*\))?!?:\s/i, GIT_REVERT = /^Revert
 const git = (dir, args) => execFileSync('git', ['-C', dir, '-c', 'core.quotePath=false', ...args], { maxBuffer: 1 << 30, windowsHide: true, timeout: 300000, stdio: ['ignore', 'pipe', 'pipe'] });
 /** a subject's conventional-commit type (git's own `Revert "..."` is a revert) | null */
 export const typeOf = s => { const m = TYPE.exec(s), t = m && m[1].toLowerCase(); return t && SIGNAL_LIMITS.types.includes(t) ? t : GIT_REVERT.test(s) ? 'revert' : null; };
-const dayOf = t => new Date(t).toISOString().slice(0, 10);
+const iso = t => new Date(t).toISOString();
 
 /** every commit reachable from HEAD -> Map sha -> { sha, p: [parents], t (ms), s: subject, stat: [files under dir] } */
 function commits(dir) {
@@ -43,44 +43,58 @@ function commits(dir) {
   return m;
 }
 
-/** dir: the indexed folder; ix: codeIndex's answer (its files, churn, fan_in, importance) -> the signals (docs/code-signals.md) */
-export function codeSignals(dir, ix, { now = Date.now() } = {}) {
-  const L = SIGNAL_LIMITS, since = now - L.window_days * DAY, short = now - L.fix_short_days * DAY, C = commits(dir), chain = [];
+/** main's first-parent landings in (since, now], oldest first -> [{ sha, t, files: Set, intro: [the commits it brought in] }] */
+function landingsOf(dir, since, now) {
+  const C = commits(dir), chain = [], owner = new Set(), lands = [];
   for (let s = git(dir, ['rev-parse', 'HEAD']).toString().trim(); s && C.has(s); s = C.get(s).p[0]) chain.push(s);
-  const owner = new Set(), lands = [];
   for (const s of chain.reverse()) {   // oldest first: each landing owns what no older one reaches
     const st = [s], intro = [];
     while (st.length) { const x = st.pop(); if (owner.has(x) || !C.has(x)) continue; owner.add(x); intro.push(C.get(x)); st.push(...C.get(x).p); }
     const c = C.get(s);
     if (c.t > since && c.t <= now) lands.push({ sha: s, t: c.t, files: new Set(c.stat), intro });
   }
-  const own = lands.flatMap(l => l.intro.filter(c => c.p.length < 2)), typed = own.filter(c => typeOf(c.s)).length;
-  const ok = own.length > 0 && typed / own.length >= L.typed_min_share;
-  const K = new Set(ix.files.map(x => x.file)), n = new Map(), pair = new Map(), fixes = new Map();
+  return lands;
+}
+/** the non-batch landings per known file (n) and per pair of them (pair: file -> Map partner -> shared), and the batches skipped */
+function coChange(lands, K) {
+  const n = new Map(), pair = new Map(), bump = (m, k) => m.set(k, (m.get(k) ?? 0) + 1);
   let batches = 0;
   for (const l of lands) {
-    if (l.files.size > L.batch_files) batches++;
-    else {
-      const k = [...l.files].filter(f => K.has(f));
-      for (const f of k) { n.set(f, (n.get(f) ?? 0) + 1); const m = pair.get(f) ?? new Map(); pair.set(f, m); for (const g of k) if (g !== f) m.set(g, (m.get(g) ?? 0) + 1); }
-    }
-    const hit = new Map();   // file -> the newest fix commit of this landing on it
-    for (const c of l.intro) { const t = typeOf(c.s); if (L.fix_types.includes(t)) for (const f of c.stat) if (K.has(f) && l.files.has(f) && !(hit.get(f)?.t > c.t)) hit.set(f, { ...c, type: t }); }
-    for (const [f, c] of hit) { const xs = fixes.get(f) ?? []; fixes.set(f, xs); xs.push({ sha: l.sha.slice(0, 12), day: dayOf(l.t), t: l.t, subject: c.s, type: c.type }); }
+    if (l.files.size > SIGNAL_LIMITS.batch_files) { batches++; continue; }
+    const k = [...l.files].filter(f => K.has(f));
+    for (const f of k) { bump(n, f); const m = pair.get(f) ?? new Map(); pair.set(f, m); k.forEach(g => g !== f && bump(m, g)); }
   }
-  const N = ix.files.length, nFix = x => (fixes.get(x.file) ?? []).length;
-  const pf = borda(ix.files.map(x => x.fan_in ?? 0)), pc = borda(ix.files.map(x => x.churn_90d)), px = borda(ix.files.map(nFix));
-  const files = {};
-  ix.files.forEach((x, i) => {
-    const mine = n.get(x.file) ?? 0, xs = (fixes.get(x.file) ?? []).reverse();
-    const partners = [...(pair.get(x.file) ?? [])].map(([file, shared]) => ({ file, shared, share: Math.round(100 * shared / mine) / 100, landings: n.get(file) }))
-      .filter(p => p.shared >= L.min_shared && p.shared / mine >= L.min_share).sort((a, b) => b.shared - a.shared || b.share - a.share || (a.file < b.file ? -1 : 1)).slice(0, L.max_partners);
-    files[x.file] = { landings: mine, partners, fixes: ok ? { n_90d: xs.filter(f => f.t > short).length, n_365d: xs.length, last: xs.slice(0, L.last_fixes).map(({ t, ...f }) => f) } : null,
-      fix_first: ok ? (N > 1 ? Math.round(100 * (pf[i] + pc[i] + px[i]) / (3 * (N - 1))) : 100) : null, importance: x.importance, churn_90d: x.churn_90d, fan_in: x.fan_in };
-  });
+  return { n, pair, batches };
+}
+/** a landing's fixes on the known files it touched -> Map file -> the newest fix commit it brought in on that file (+ its type) */
+function fixesOn(l, K) {
+  const hit = new Map();
+  for (const c of l.intro) {
+    const t = typeOf(c.s);
+    if (!SIGNAL_LIMITS.fix_types.includes(t)) continue;
+    for (const f of c.stat) if (K.has(f) && l.files.has(f) && !(hit.get(f)?.t > c.t)) hit.set(f, { ...c, type: t });
+  }
+  return hit;
+}
+/** a file's partners over the thresholds, strongest first */
+const partnersOf = (pair, n, f) => { const mine = n.get(f) ?? 0, L = SIGNAL_LIMITS;
+  return [...(pair.get(f) ?? [])].map(([file, shared]) => ({ file, shared, share: Math.round(100 * shared / mine) / 100, landings: n.get(file) }))
+    .filter(p => p.shared >= L.min_shared && p.shared / mine >= L.min_share).sort((a, b) => b.shared - a.shared || b.share - a.share || (a.file < b.file ? -1 : 1)).slice(0, L.max_partners); };
+
+/** dir: the indexed folder; ix: codeIndex's answer (its files, churn, fan_in, importance) -> the signals (docs/code-signals.md) */
+export function codeSignals(dir, ix, { now = Date.now() } = {}) {
+  const L = SIGNAL_LIMITS, since = now - L.window_days * DAY, short = now - L.fix_short_days * DAY, lands = landingsOf(dir, since, now), K = new Set(ix.files.map(x => x.file));
+  const own = lands.flatMap(l => l.intro.filter(c => c.p.length < 2)), typed = own.filter(c => typeOf(c.s)).length, ok = own.length > 0 && typed / own.length >= L.typed_min_share;
+  const { n, pair, batches } = coChange(lands, K), fixes = new Map();
+  for (const l of lands) for (const [f, c] of fixesOn(l, K)) { const xs = fixes.get(f) ?? []; fixes.set(f, xs); xs.unshift({ sha: l.sha.slice(0, 12), day: iso(l.t).slice(0, 10), t: l.t, subject: c.s, type: c.type }); }
+  const N = ix.files.length, fx = x => fixes.get(x.file) ?? [];
+  const pf = borda(ix.files.map(x => x.fan_in ?? 0)), pc = borda(ix.files.map(x => x.churn_90d)), px = borda(ix.files.map(x => fx(x).length));
+  const files = Object.fromEntries(ix.files.map((x, i) => [x.file, { landings: n.get(x.file) ?? 0, partners: partnersOf(pair, n, x.file),
+    fixes: ok ? { n_90d: fx(x).filter(f => f.t > short).length, n_365d: fx(x).length, last: fx(x).slice(0, L.last_fixes).map(({ t, ...f }) => f) } : null,
+    fix_first: ok ? (N > 1 ? Math.round(100 * (pf[i] + pc[i] + px[i]) / (3 * (N - 1))) : 100) : null, importance: x.importance, churn_90d: x.churn_90d, fan_in: x.fan_in }]));
   const fix = ok ? { status: 'measured', typed, commits: own.length }
     : { status: 'n/a', typed, commits: own.length, reason: own.length ? `${typed} of ${own.length} commits in ${L.window_days} days carry a conventional-commit type (under ${100 * L.typed_min_share} %)` : `no commit in ${L.window_days} days` };
-  return { at: new Date(now).toISOString(), sha: ix.sha, basis: 'measured', window: { days: L.window_days, from: dayOf(since), to: dayOf(now) }, limits: L, landings: lands.length, batches_skipped: batches, fixes: fix, files };
+  return { at: iso(now), sha: ix.sha, basis: 'measured', window: { days: L.window_days, from: iso(since).slice(0, 10), to: iso(now).slice(0, 10) }, limits: L, landings: lands.length, batches_skipped: batches, fixes: fix, files };
 }
 
 const fileOf = state => path.join(state, 'code', SIGNALS_FILE);
