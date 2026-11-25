@@ -12,6 +12,7 @@ import { record, loadState, readEvents, recordsFile, fold, RecordError, kindOfId
 import { mkTmp } from './helpers/tmp.mjs';
 import { binOf } from '../engine/lib/rustbin.mjs';
 import { fwd } from '../engine/lib/config.mjs';
+import { waitMail, MAIL_WAIT_POLL_S } from '../engine/lib/mail.mjs';
 
 const META = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'bin', 'norn.mjs');
 
@@ -111,7 +112,7 @@ const cleanEnv = (extra = {}) => {
   for (const k of ['META_STATE', 'META_PROJECT', 'META_ROLE', 'META_RUN_ID', 'META_NOTES', 'META_SESSION_ID', 'META_RESUMES', 'META_JOB']) if (!(k in extra)) delete env[k];
   return env;
 };
-const meta = (args, extra = {}) => spawnSync(process.execPath, [META, ...args], { encoding: 'utf8', env: cleanEnv(extra), timeout: 30000 });
+const meta = (args, extra = {}) => spawnSync(process.execPath, [META, ...args], { encoding: 'utf8', env: cleanEnv(extra), timeout: 30000, windowsHide: true });
 const metaAsync = (args, extra = {}) => new Promise(res => {
   const p = spawn(process.execPath, [META, ...args], { env: cleanEnv(extra) });
   let out = '', err = '';
@@ -449,4 +450,73 @@ test('gate fact mail:MAIL-n: mail to role:checkin wakes the check-in (MAJOR) onc
   const c3 = checkin(55, 56); c3.end();
   R({ kind: 'mail', ev: 'ack', id: 'MAIL-3', by: 'controller', data: {} }, 60);
   assert.equal(gate(61).run, false, gate(61).why);
+});
+
+// ---------- NORN-MAIL-WAIT: norn mail wait (the controller session's blocking read; clock, sleep and fetch injected) + ack of several ids ----------
+const W0 = Date.parse('2026-11-25T10:00:00Z');
+const clock = () => { const c = { t: W0, sleeps: 0, fetches: 0 }; c.now = () => c.t; c.sleep = async ms => { c.sleeps++; c.t += ms; }; c.fetch = () => { c.fetches++; }; return c; };
+const toCtl = (s, run, subject = 'S') => send(s, 'worker', { from: run, to: 'role:controller', subject }, run);
+const deliveries = (s, id) => readEvents(recordsFile(s, 'mail')).filter(e => e.id === id && e.ev === 'deliver').length;
+
+test('waitMail: queued controller mail is delivered at once, once (no sleep, no fetch); a second wait does not take it again', async () => {
+  const s = tmp(), r = startRun(s), c = clock();
+  toCtl(s, r);
+  const got = await waitMail(s, { by: 'controller', to: 'role:controller', timeoutMin: 5, now: c.now, sleep: c.sleep, fetch: c.fetch });
+  assert.deepEqual(got.map(m => m.id), ['MAIL-1']);
+  assert.equal(got[0].text, 'hello');
+  assert.deepEqual([c.sleeps, c.fetches], [0, 0]);
+  assert.equal(mails(s)['MAIL-1'].state, 'delivered'); assert.equal(mails(s)['MAIL-1'].deliver.via, 'cli');
+  assert.deepEqual(await waitMail(s, { by: 'controller', to: 'role:controller', timeoutMin: 1, now: c.now, sleep: c.sleep, fetch: c.fetch }), []);
+  assert.equal(deliveries(s, 'MAIL-1'), 1);
+});
+
+test('waitMail: nothing arrives -> [] at the timeout, one fetch per poll round, nothing delivered', async () => {
+  const s = tmp(), r = startRun(s), c = clock();
+  send(s, 'controller', { from: 'role:controller', to: r });   // another box's mail is not the controller's
+  const got = await waitMail(s, { by: 'controller', to: 'role:controller', timeoutMin: 2, now: c.now, sleep: c.sleep, fetch: c.fetch });
+  assert.deepEqual(got, []);
+  assert.equal(c.t - W0, 2 * 60000, 'waited exactly the timeout');
+  assert.equal(c.sleeps, 2 * 60 / MAIL_WAIT_POLL_S); assert.equal(c.fetches, c.sleeps);
+  assert.equal(mails(s)['MAIL-1'].state, 'queued');
+});
+
+test('waitMail: a mail created while it waits is delivered and ends the wait', async () => {
+  const s = tmp(), r = startRun(s), c = clock();
+  const sleep = async ms => { await c.sleep(ms); if (c.sleeps === 3) toCtl(s, r, 'late'); };
+  const got = await waitMail(s, { by: 'controller', to: 'role:controller', now: c.now, sleep, fetch: c.fetch });   // no timeout: until mail comes
+  assert.deepEqual(got.map(m => [m.id, m.data.subject]), [['MAIL-1', 'late']]);
+  assert.equal(c.sleeps, 3);
+  assert.equal(mails(s)['MAIL-1'].state, 'delivered');
+});
+
+test('norn mail wait: queued mail printed as check prints it, exit 0; --timeout-min with none: the no-mail line; a run and a check-in are refused', () => {
+  const s = tmp(), r = startRun(s);
+  toCtl(s, r, 'wake up');
+  const w = meta(['mail', 'wait', '--state', s, '--timeout-min', '5']);
+  assert.equal(w.status, 0, w.stderr);
+  assert.match(w.stdout, /^MAIL-1 from RUN-1: wake up\nhello\n\(ack it: norn mail ack MAIL-1/);
+  assert.equal(deliveries(s, 'MAIL-1'), 1);
+  const none = meta(['mail', 'wait', '--state', s, '--timeout-min', '0']);
+  assert.equal(none.status, 0, none.stderr); assert.equal(none.stdout.trim(), 'no new mail in 0 min');
+  const run = meta(['mail', 'wait', '--state', s, '--timeout-min', '0'], { META_RUN_ID: r });
+  assert.equal(run.status, 2); assert.equal(run.stderr.trim().split('\n').length, 1, run.stderr); assert.match(run.stderr, /a run gets its mail from the hook/);
+  const ci = meta(['mail', 'wait', '--state', s, '--timeout-min', '0', '--as', 'checkin']);
+  assert.equal(ci.status, 2); assert.equal(ci.stderr.trim().split('\n').length, 1, ci.stderr); assert.match(ci.stderr, /a check-in must not block/);
+  assert.equal(meta(['mail', 'wait', '--state', s, '--timeout-min', 'soon']).status, 2);
+  assert.equal(meta(['mail', 'wait', '--state', s, '--to', 'role:checkin', '--timeout-min', '0']).status, 2, 'the controller session reads role:controller only');
+});
+
+test('norn mail ack with several ids: each in order, one line each; a bad id in the middle: the others acked, its code returned', () => {
+  const s = tmp(), r = startRun(s);
+  for (let i = 0; i < 5; i++) toCtl(s, r);
+  const all = meta(['mail', 'ack', 'MAIL-1', 'MAIL-2', 'MAIL-3', '--state', s]);
+  assert.equal(all.status, 0, all.stderr);
+  assert.equal(all.stdout.trim(), 'MAIL-1 acked\nMAIL-2 acked\nMAIL-3 acked');
+  const mid = meta(['mail', 'ack', 'MAIL-4', 'MAIL-99', 'MAIL-5', '--state', s]);
+  assert.equal(mid.status, 2, mid.stderr);
+  assert.equal(mid.stdout.trim(), 'MAIL-4 acked\nMAIL-5 acked');
+  assert.match(mid.stderr.trim(), /^error: MAIL-99 does not exist$/);
+  assert.deepEqual(Object.values(mails(s)).map(m => m.state), Array(5).fill('acked'));
+  const again = meta(['mail', 'ack', 'MAIL-1', '--state', s]);
+  assert.equal(again.status, 2, 'one id behaves as before: refusal + usage'); assert.match(again.stderr, /usage: /);
 });

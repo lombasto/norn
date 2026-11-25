@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { sendMail, checkMail, listMail, qualify, arrivalNotices } from '../engine/lib/mail.mjs';
+import { sendMail, checkMail, listMail, qualify, arrivalNotices, waitMail } from '../engine/lib/mail.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 function homes() {
@@ -170,4 +170,26 @@ test('an urgent arrival for the controller returns exactly one notice; plain mai
   assert.deepEqual(arrivalNotices(b), [], 'once');
   sync();
   assert.deepEqual(arrivalNotices(b), [], 'a second fetch of the same mail: still once');
+});
+
+// NORN-MAIL-WAIT: home b's controller session waits; its fetch (here the fixture's sync, in the CLI the tick's stale fetch) brings home a's mail
+test('home a mails role:controller@b -> home b\'s wait gets it through the fetch, delivers it; home a\'s list: at b, then delivered', async () => {
+  const { a, b, sync } = homes();
+  const m = sendMail(a, { by: 'controller', to: 'role:controller@b', subject: 'wake', body: 'from a' });
+  let t = Date.parse('2026-11-25T10:00:00Z'), fetches = 0;
+  // the fetch: b pulls a's log, and b's receipt (it holds a's mail up to m) reaches a, as b's next publish carries it
+  const fetch = () => {
+    fetches++;
+    if (fetches < 2) return;   // the first round's fetch finds nothing new yet
+    sync();
+    fs.mkdirSync(path.join(a, 'homes', 'b'), { recursive: true });
+    fs.writeFileSync(path.join(a, 'homes', 'b', 'seen.json'), JSON.stringify({ polled_at: '2026-11-25T10:00:00Z', held: { a: { 'mail.jsonl': m.seq } } }));
+  };
+  const got = await waitMail(b, { by: 'controller', to: 'role:controller', timeoutMin: 5, now: () => t, sleep: async ms => { t += ms; }, fetch });
+  assert.deepEqual(got.map(x => [x.id, x.text]), [[m.id, 'from a']]);
+  assert.equal(fetches, 2);
+  assert.match(listMail(a)[0].where, /^at b, b last polled /, 'before b\'s log comes back: at b, from the receipt');
+  sync();
+  assert.equal(listMail(a)[0].where, 'delivered');
+  assert.equal(listMail(b, { to: 'role:controller' })[0].state, 'delivered');
 });
