@@ -225,3 +225,41 @@ exit:   0 answer; 2 usage; 3 n/a ({ ok: false, why } on stdout with --json, else
   are repo-root-relative.
 - `index` with `parsed` / `reused` / `ms` of the run it made (0 / null / the read time when already stored).
 - `status`: `{ built, binary, why? (why norn-code is not usable), store_schema, store, head, indexed: [the newest 5 commits.json rows, indexed_at as ISO] }`.
+
+## A consumer: `norn code card` (RM-a-57)
+
+`norn code card <file>.. [--json] [--project P | --state D] [--repo DIR]` answers "what is this file before I read it?" in at most
+`CARD_LIMITS.tokens` per file (engine/lib/codecard.mjs, no model), from this doc's reader (`graphAt` with `noIndex: true`, `dependents`,
+`fans`), the code signals' reader (`readSignals`, docs/code-signals.md) and the tests index (`<state>/tests/impact.json`, `testsFor`).
+File paths are relative to the project folder (the graph's file is `prefix + file`).
+
+- **What**: the graph's `lang` (else "not a graph language") and the file's lines on disk; an excluded file says its rule.
+- **Used by**: the count of files importing it (depth 1, `ALL_KINDS`) and the top `dependents` of them, most depended-on first (their own
+  `fans().in`), then by path.
+- **Changes with**: the signals' `partners` (`shared/landings`), at most `partners`; **fixes**: `n_90d`, `n_365d` and the last fix, or the
+  signals' n/a with its reason; **tests**: the test files the impact map says cover it ("none cover it" when known and none).
+- **Indexed**: the graph's commit and age (", newest stored" when `stamp.exact` is false), the signals' sha and age, the tests index's sha
+  and age; every part is measured. A part whose index does not exist (no graph store, no signals, no impact map, or a file the index does
+  not hold) reads `not indexed`, and `--json` carries the reason in `not_indexed`. No part starts an index run.
+- Over the cap, the longest list loses its last entry first (counted in `+N more`), then the fix subject shortens.
+- `--json`: `{ cap, not_indexed: { graph, signals, tests }, cards: [{ file, lang, lines, excluded?, dependents: { n, top } | { na },
+  partners: [{ file, shared, landings }] | { na }, fixes: { n_90d, n_365d, last } | { na }, tests: [file] | { na }, stamps, basis, text, tokens }] }`.
+
+Workers get it as the MCP tool `norn_code_card` (`{ files: [path] }`, worker profile) under the per-project switch `policy.code.card`:
+`off` (the default) gives it to no run; `ab` gives it to every worker run with an even run number (group `card`) and not to the odd ones
+(group `control`). A worker's MCP server records its run's group on its first `tools/list` in `<state>/code/card/<RUN>.json`.
+`norn code card --report [--json]` compares the finished marked runs of both groups: tokens per run (cost.mjs `usageOfRun`), distinct files
+read per run (the transcript's Read calls, readev.mjs), the done rate, with the group sizes and the runs it could not measure. Under
+`min_group` runs in either group it prints `too few runs: card N, control M (15 each needed)` and exits 1. The owner decides from it.
+
+Thresholds (`CARD_LIMITS` in engine/lib/codecard.mjs, the one place):
+
+| key | value | meaning |
+|---|---|---|
+| `tokens` | 400 | a card's most tokens (estimated) |
+| `chars_per_token` | 4 | the estimate: characters / this |
+| `dependents` | 5 | importers named |
+| `partners` | 5 | partners named |
+| `tests` | 5 | test files named |
+| `subject` | 72 | the last fix's subject keeps at most this many characters |
+| `min_group` | 15 | the report compares only from this many finished runs per group |
