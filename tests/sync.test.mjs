@@ -6,7 +6,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { ledgerConfig, ledgerFiles } from '../engine/lib/ledger.mjs';
-import { publishHome, fetchHomes, syncStatus, syncStep, HOME_FILES } from '../engine/lib/sync.mjs';
+import { publishHome, fetchHomes, syncStatus, syncStep, publishDue, HOME_FILES } from '../engine/lib/sync.mjs';
+import { sendMail, listMail } from '../engine/lib/mail.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const META = path.resolve('engine/bin/norn.mjs');
@@ -41,7 +42,7 @@ const tree = (dir, ref) => g(dir, 'ls-tree', '-r', '--name-only', ref).out.split
 
 test('sync publish: home/<id> carries exactly the shared files + copy/runs + copy/deliverables of each synced project, verbatim; pushed; a second pass is a no-op', () => {
   const remote = remoteRepo(), a = home('a', remote);
-  assert.deepEqual(HOME_FILES.map(x => x.to), ['home.json', 'records.jsonl', 'roadmap.jsonl', 'mail.jsonl', 'waivers.jsonl', 'relay.jsonl', 'copy/runs.jsonl', 'copy/deliverables.jsonl']);
+  assert.deepEqual(HOME_FILES.map(x => x.to), ['home.json', 'records.jsonl', 'roadmap.jsonl', 'mail.jsonl', 'waivers.jsonl', 'relay.jsonl', 'copy/runs.jsonl', 'copy/deliverables.jsonl', 'seen.json']);
   const r = publishHome(a.cfg, { now: T0 });
   assert.ok(r.sha && r.pushed, JSON.stringify(r));
   const want = ['demo/copy/deliverables.jsonl', 'demo/copy/runs.jsonl', 'demo/home.json', 'demo/mail.jsonl', 'demo/records.jsonl', 'demo/relay.jsonl', 'demo/roadmap.jsonl', 'demo/waivers.jsonl'];
@@ -73,10 +74,11 @@ test('sync fetch: b writes byte-identical copies of home a under <state>/homes/a
   assert.ok(publishHome(a.cfg, { now: T0 }).pushed); assert.ok(publishHome(b.cfg, { now: T0 }).pushed);
   const r = fetchHomes(b.cfg, { now: T0 });
   assert.deepEqual(r.homes, ['a']);
-  for (const x of HOME_FILES) assert.deepEqual(fs.readFileSync(path.join(b.st, 'homes', 'a', x.to)), fs.readFileSync(path.join(a.st, x.from)), x.to);
+  const has = HOME_FILES.filter(x => x.to !== 'seen.json');   // home a has not fetched yet: no receipts of its own to publish
+  for (const x of has) assert.deepEqual(fs.readFileSync(path.join(b.st, 'homes', 'a', x.to)), fs.readFileSync(path.join(a.st, x.from)), x.to);
   assert.ok(!fs.existsSync(path.join(b.st, 'homes', 'b')), 'own home is never copied');
   assert.ok(!fs.existsSync(path.join(b.meta, 'state', 'solo', 'homes')), 'a solo project gets no copies');
-  assert.equal(r.written.length, HOME_FILES.length);
+  assert.equal(r.written.length, has.length);
   assert.deepEqual(fetchHomes(b.cfg, { now: T0 }).written, [], 'unchanged blobs are not rewritten');
   fs.appendFileSync(path.join(a.st, 'records.jsonl'), '{"id":"Q-a-2"}\n'); publishHome(a.cfg, { now: T0 });
   assert.deepEqual(fetchHomes(b.cfg, { now: T0 }).written, ['demo/homes/a/records.jsonl']);
@@ -161,4 +163,53 @@ test('the tick pass end publishes home/<id> after the ledger commit (SPEC 4.1)',
   const r = spawnSync(process.execPath, [META, 'tick', '--reason', 't'], { env: { ...process.env, META_ROOT: a.meta, META_STATE: '', META_PROJECT: '' }, encoding: 'utf8', windowsHide: true });
   assert.equal(r.status, 0, r.stderr);
   assert.ok(tree(remote, ref('a')).includes('demo/records.jsonl'));
+});
+
+// HOME-MAIL S1 (receipts): each home publishes seen.json - per other home the highest seq it holds of each shared log + polled_at (5 min)
+function mailHomes() {
+  const remote = remoteRepo(), a = home('a', remote), b = home('b', remote);
+  for (const h of [a, b]) for (const f of ['mail.jsonl', 'records.jsonl', 'roadmap.jsonl', 'waivers.jsonl', 'runs.jsonl']) w(path.join(h.st, f), '');
+  // one settled round: each home holds the other's logs and has published its receipts
+  for (const h of [a, b, a, b, a]) { publishHome(h.cfg, { now: T0 }); fetchHomes(h.cfg, { now: T0 }); }
+  publishHome(b.cfg, { now: T0 });
+  return { a, b };
+}
+
+test('receipts: a sends + publishes, b passes + publishes, a passes -> a reads the mail "at b"; no publish is due on either home after the hop', () => {
+  const { a, b } = mailHomes(), T1 = T0 + 60000;
+  assert.equal(publishDue(a.cfg), false); assert.equal(publishDue(b.cfg), false);
+  const m = sendMail(a.st, { by: 'controller', to: 'role:controller@b', subject: 'hop', body: 'the text' });
+  assert.ok(publishHome(a.cfg, { now: T1 }).pushed);
+  fetchHomes(b.cfg, { now: T1 });
+  const seen = JSON.parse(fs.readFileSync(path.join(b.st, 'seen.json'), 'utf8'));
+  assert.equal(seen.polled_at, '2026-11-20T10:00:00Z', 'rounded down to 5 min');
+  assert.equal(seen.held.a['mail.jsonl'], m.seq);
+  assert.ok(publishHome(b.cfg, { now: T1 }).pushed);
+  fetchHomes(a.cfg, { now: T1 });
+  const [row] = listMail(a.st, { now: T1 });
+  assert.equal(row.id, m.id); assert.equal(row.state, 'queued');
+  assert.match(row.where, /^at b,/);
+  assert.equal(publishDue(a.cfg), false, 'a: its receipts of b did not change (the logs of b did not)');
+  assert.equal(publishDue(b.cfg), false);
+});
+
+test('receipts: with the pass of b skipped the row reads "sent, b last polled T"; no receipt from b (an older version) reads unknown', () => {
+  const { a } = mailHomes(), T1 = T0 + 60000;
+  sendMail(a.st, { by: 'controller', to: 'role:controller@b', subject: 'wait', body: 'x' });
+  publishHome(a.cfg, { now: T1 });
+  assert.equal(listMail(a.st, { now: T1 })[0].where, 'sent, b last polled 2026-11-20T10:00:00Z');
+  fs.rmSync(path.join(a.st, 'homes', 'b', 'seen.json'));
+  assert.equal(listMail(a.st, { now: T1 })[0].where, 'sent, b unknown');
+});
+
+test('receipts: a publish where only polled_at moved is a heartbeat and rings no doorbell; a new receipt rings', () => {
+  const { a, b } = mailHomes(), rings = [], T6 = T0 + 6 * 60000;
+  const bell = JSON.parse(fs.readFileSync(b.mf, 'utf8')); bell.ledger.doorbell = { topic: 'fake-bell-Zq1' }; w(b.mf, JSON.stringify(bell));
+  fetchHomes(b.cfg, { now: T6 });
+  assert.equal(syncStep(b.cfg, 'tick', { now: T6, ring: () => rings.push('ring') }) !== null, true);
+  assert.deepEqual(rings, [], 'heartbeat only: no ring');
+  sendMail(a.st, { by: 'controller', to: 'role:controller@b', subject: 'ring', body: 'x' }); publishHome(a.cfg, { now: T6 });
+  fetchHomes(b.cfg, { now: T6 });
+  syncStep(b.cfg, 'tick', { now: T6, ring: () => rings.push('ring') });
+  assert.deepEqual(rings, ['ring'], 'what b holds of a moved: rung');
 });
