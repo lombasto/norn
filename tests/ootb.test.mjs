@@ -13,6 +13,9 @@ import { loadState } from '../engine/lib/records.mjs';
 import { adapterFor, schedName, schedState, liveName, schedApply } from '../engine/lib/sched/index.mjs';
 import { schedChoice } from '../engine/lib/setup.mjs';
 import { settled } from './helpers/settled.mjs';
+import { rustReady } from './helpers/rust.mjs';
+
+test.before(rustReady);   // norn setup builds norn-hook and norn-code: a cold build runs here, never inside a step's time limit
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const META = path.join(REPO, 'engine', 'bin', 'norn.mjs');
