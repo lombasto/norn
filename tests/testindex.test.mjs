@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
-import { scanCases } from '../engine/lib/testindex.mjs';
+import { scanCases, buildIndex } from '../engine/lib/testindex.mjs';
 import { repoIndex, depsOf, cacheDirOf } from '../engine/lib/testcache.mjs';
 import { testsPart, tickTests } from '../engine/lib/testscli.mjs';
 import { pickInRepo } from '../engine/lib/testpolicy.mjs';
@@ -70,6 +70,21 @@ test('T1 norn tests index: cases.json (id, line, span, desc), impact.json = the 
   assert.deepEqual(im.sources, { 'engine/a.mjs': ['tests/one.test.mjs'], 'engine/b.mjs': ['tests/one.test.mjs', 'tests/three.test.mjs', 'tests/two.test.mjs'], 'engine/c.mjs': ['tests/two.test.mjs'] });
   assert.deepEqual([im.suite, im.sha, im.uncovered], ['node:test', w.sha, ['engine/d.mjs']]);
   assert.deepEqual(w.read('times.json').files, [{ file: 'tests/one.test.mjs', ms: 40 }, { file: 'tests/two.test.mjs', ms: 7 }], 'the median of the last 5 ran rows; reused rows and other repos\' files left out');
+});
+
+test('RM-a-55 buildIndex: one index - node cases carry runner node:test, a pytest / cargo part joins cases, sources and tests rows (all inferred); a graph n/a is said, never guessed', () => {
+  const w = world(), ix = repoIndex(w.repo), tests = ['tests/one.test.mjs', 'tests/three.test.mjs', 'tests/two.test.mjs'];
+  const part = { cases: [{ id: 'py/tests/test_a.py::test_a', file: 'py/tests/test_a.py', name: 'test_a', line: 1, lines: 2, desc: 'test_a', runner: 'pytest' }], files: { 'py/tests/test_a.py': { lines: 2, cases: 1 } },
+    tests: { 'py/tests/test_a.py': { runner: 'pytest', basis: 'inferred', dir: 'py', id: 'tests/test_a.py' } }, sources: { 'engine/b.mjs': ['py/tests/test_a.py'], 'py/a.py': ['py/tests/test_a.py'] },
+    uncovered: ['py/lone.py'], graph: { commit: 'c'.repeat(40), tree: 't'.repeat(40) }, partial: [] };
+  const idx = buildIndex({ ix, tests, code: ['engine/d.mjs'], sha: 'abc', graph: part });
+  assert.ok(idx.cases.cases.filter(c => c.file.startsWith('tests/')).every(c => c.runner === 'node:test'));
+  assert.deepEqual([idx.cases.cases.length, idx.cases.files['py/tests/test_a.py'], idx.impact.suite], [6, { lines: 2, cases: 1 }, 'node:test + pytest']);
+  assert.deepEqual(idx.impact.sources['engine/b.mjs'], ['tests/one.test.mjs', 'tests/three.test.mjs', 'tests/two.test.mjs', 'py/tests/test_a.py']);
+  assert.deepEqual([idx.impact.sources['py/a.py'], idx.impact.uncovered, idx.impact.graph.commit], [['py/tests/test_a.py'], ['engine/d.mjs', 'py/lone.py'], 'c'.repeat(40)]);
+  assert.ok(Object.values(idx.impact.tests).every(r => r.basis === 'inferred') && idx.impact.tests['tests/two.test.mjs'].runner === 'node:test');
+  const na = buildIndex({ ix, tests, code: ['engine/d.mjs'], sha: 'abc', graph: { na: 'norn-code is not built' } });
+  assert.deepEqual([na.impact.graph, na.impact.suite, na.cases.cases.length], [{ na: 'norn-code is not built' }, 'node:test', 5]);
 });
 
 test('T2 pickRun: the new impact.json leaves the light pick unchanged (static deps include every direct import); times.json orders it fastest-first', () => {
