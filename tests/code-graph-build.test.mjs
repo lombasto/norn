@@ -2,7 +2,8 @@
 // JavaScript / TypeScript, Python and Rust, and the store. Each fixture under tests/fixtures/code-graph/<lang>/ is committed into a
 // fresh repo; `norn-code index` must write a tree snapshot whose edges, unresolved imports and files equal its expected.json, `how`
 // and `kind` included. A second commit that changes one file parses exactly that one blob. rustbin's checks run on a fake crate dir.
-// S2: `query symbols` per file equals expected.json defs (bounds, qual, exported); the body hash matches a renamed copy.
+// S2: `query symbols` per file equals expected.json defs (bounds, qual, exported); the body hash matches a renamed copy. S3: `query calls`
+// per call fixture equals expected.json calls (how, candidates, targets), and the fixtures cover every how class.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -108,4 +109,24 @@ test('the body hash leaves out comments and the def\'s own name: helper and its 
   const r = repoOf('js'), defs = code('query', 'symbols', '--file', 'src/shapes.mjs', '--repo', r.repo, '--state', r.state).defs, by = n => defs.find(d => d.name === n);
   assert.equal(by('helper').hash, by('copy').hash);
   assert.notEqual(by('helper').hash, by('twice').hash);
+});
+
+// S3: each fixture's calls file resolves call site by call site as expected.json `calls` says, and together the fixtures hold every
+// how class of the call table (SPEC 4.2), an ambiguous site with its full list and an external one included
+const HOW_CLASSES = ['local', 'import', 'qualified', 'self', 'method-unique', 'ambiguous', 'external'];
+for (const lang of ['js', 'py', 'rs']) {
+  test(`norn-code query calls on fixture ${lang}: every call site's how, candidate count and targets equal expected.json calls`, () => {
+    const r = repoOf(lang), want = JSON.parse(fs.readFileSync(path.join(FIX, lang, 'expected.json'), 'utf8')).calls;
+    for (const [file, calls] of Object.entries(want)) {
+      const got = code('query', 'calls', '--file', file, '--repo', r.repo, '--state', r.state);
+      assert.deepEqual(got.calls.map(({ line, col, name, how, candidates, targets }) => ({ line, col, name, how, candidates, targets })), calls, file);
+      assert.ok(got.calls.every(c => (c.how === 'external' || c.how === 'unresolved') === (c.candidates === 0) && typeof c.why === (c.candidates ? 'undefined' : 'string')), file);
+      const amb = calls.filter(c => c.how === 'ambiguous');
+      assert.ok(amb.length && amb.every(c => c.candidates > 1 && c.targets.length === c.candidates), `${file}: an ambiguous site keeps its whole list`);
+    }
+  });
+}
+test('the call fixtures together cover every how class of the call table', () => {
+  const seen = new Set(['js', 'py', 'rs'].flatMap(l => Object.values(JSON.parse(fs.readFileSync(path.join(FIX, l, 'expected.json'), 'utf8')).calls).flat().map(c => c.how)));
+  for (const h of HOW_CLASSES) assert.ok(seen.has(h), `no fixture call site is ${h}`);
 });

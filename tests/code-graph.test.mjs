@@ -1,7 +1,7 @@
 // code-graph S1b (SPEC code-graph 7.1-7.3, the contract docs/code-graph.md): the one reader engine/lib/codegraph.mjs over the
 // synthetic fixtures tests/fixtures/code-graph/{js,py,rs}, each committed into a fresh repo with its own store: the stamp, the walks
 // (dependencies / dependents / reach), cycles over LOAD_KINDS, fans, excluded, the { ok: false, why } answers, --no-index, and the
-// `norn code graph` verbs' exit codes and --json shapes. S2: symbols() / references() and the symbols / refs verbs.
+// `norn code graph` verbs' exit codes and --json shapes. S2: symbols() / references() and the symbols / refs verbs. S3: callers() and the callers verb.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -9,7 +9,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { mkTmp } from './helpers/tmp.mjs';
 import { ensurePart } from '../engine/lib/rustbin.mjs';
-import { graphAt, dependencies, dependents, cycles, reach, fans, excluded, symbols, references, ALL_KINDS, TRUST } from '../engine/lib/codegraph.mjs';
+import { graphAt, dependencies, dependents, cycles, reach, fans, excluded, symbols, references, callers, ALL_KINDS, CALL_HOWS, TRUST } from '../engine/lib/codegraph.mjs';
 import { codeCmd } from '../engine/lib/codecli.mjs';
 
 const FIX = path.join(import.meta.dirname, 'fixtures', 'code-graph');
@@ -137,4 +137,32 @@ test('norn code graph symbols / refs: the --json shapes, the text lines with bou
   assert.equal(text.code, 0); assert.match(text.out, /^function +fx\.core\.later {2}src\/fx\/core\.py:15\.\.17 {2}exported$/m);
   assert.equal(run(['refs', ...at], r.state).code, 2); assert.equal(run(['symbols', 'src/fx/core.py', '--no-index', ...at], r.state).code, 2);
   assert.equal(run(['refs', 'nosuch', ...at], r.state).code, 3);
+});
+
+const AREA = 'src/shapes.mjs#src/shapes.mjs#Shape.area#0';
+test('callers (S3): each call site whose candidates hold the def, with its how; an ambiguous one keeps its count and list; depth walks on', () => {
+  const r = repoOf('js'), c = callers({ state: r.state, repo: r.repo, symbol: AREA });
+  assert.equal(c.stamp.exact, true); assert.equal(c.symbol.id, AREA); assert.equal(c.truncated, 0);
+  assert.deepEqual(c.rows.map(x => [x.file, x.line, x.col, x.how, x.candidates, x.caller?.qual ?? null, x.depth, x.trust]), [
+    ['src/calls.mjs', 16, 17, 'self', 1, 'src/calls.mjs#Walker.walk', 1, 'unmeasured'],
+    ['src/calls.mjs', 25, 5, 'ambiguous', 2, 'src/calls.mjs#main', 1, 'unmeasured']]);
+  assert.deepEqual(c.rows[1].targets, [AREA, 'src/shapes.mjs#src/shapes.mjs#Square.area#0']);
+  const d2 = callers({ state: r.state, repo: r.repo, symbol: AREA, depth: 2 });
+  assert.deepEqual(d2.rows.slice(2).map(x => [x.line, x.name, x.how, x.depth]), [[24, 'walk', 'method-unique', 2]]);
+  assert.deepEqual(callers({ state: r.state, repo: r.repo, symbol: 'src/shapes.mjs:helper' }).rows.map(x => [x.line, x.how]), [[21, 'import']]);
+  assert.match(callers({ state: r.state, repo: r.repo, symbol: 'src/shapes.mjs:area' }).why, /defines 2 named area; name one by id/);
+  assert.match(callers({ state: r.state, repo: r.repo, symbol: 'src/nope.mjs#x#0' }).why, /no definition has the id/);
+  assert.equal(callers({ state: r.state, repo: r.repo }).ok, false);
+  assert.ok(CALL_HOWS.every(h => TRUST[`python/call/${h}`] === 'unmeasured'));
+});
+
+test('norn code graph callers: the --json shape, the text line with its how, 2 on usage, 3 n/a', () => {
+  const r = repoOf('js'), at = ['--repo', r.repo, '--json'];
+  const j = run(['callers', AREA, ...at], r.state), o = JSON.parse(j.out);
+  assert.equal(j.code, 0, j.err); assert.deepEqual(Object.keys(o).sort(), ['rows', 'stamp', 'symbol', 'truncated']);
+  assert.deepEqual(Object.keys(o.rows[0]).sort(), ['caller', 'candidates', 'col', 'depth', 'file', 'how', 'line', 'name', 'targets', 'trust']);
+  const text = run(['callers', AREA, '--repo', r.repo], r.state);
+  assert.equal(text.code, 0); assert.match(text.out, /^ {2}1 {2}src\/calls\.mjs:25:5 {2}ambiguous of 2: .*Square\.area#0 {2}in src\/calls\.mjs#main$/m);
+  assert.equal(run(['callers', ...at], r.state).code, 2); assert.equal(run(['callers', AREA, '--no-index', ...at], r.state).code, 2);
+  assert.equal(run(['callers', 'src/shapes.mjs:area', ...at], r.state).code, 3);
 });
