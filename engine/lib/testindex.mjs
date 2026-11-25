@@ -7,14 +7,16 @@
 //                a string literal (a loop's `test(name, ...)`) has no static id: it is left out.
 //   impact.json  { suite, sources: { source file: [test files] }, tests: { test file: { runner, basis, dir, ... } }, uncovered, graph? } -
 //                node:test: the inverse of testcache depsOf over every test file, so a test covers a file iff changing the file changes the
-//                test's cache key; tests/ (helpers, fixtures) and fixtures are no sources. pytest / cargo: the code graph's import reach
+//                test's cache key; tests/ (helpers, fixtures) and fixtures are no sources. A non-code file (a workflow, a doc) a test's
+//                `// reads:` header matches lists that test too (DEC-a-648: `norn tests for .github/workflows/pr.yml`); a reads edge is
+//                kept off code files and out of `uncovered` - it is a read, not coverage (impactOf). pytest / cargo: the code graph's import reach
 //                (testimpact.mjs), nearest test first; graph = the graph's { commit, tree }, or { na: why } when it cannot be had.
 //                Every test row's basis is 'inferred' (static: imports, not a coverage run).
 //   times.json   { files: [{ file, ms }] } - the median of each file's last 5 `ran` rows in the machine's cache log (testpolicy: fastest-first).
 import fs from 'node:fs';
 import path from 'node:path';
-import { depsOf } from './testcache.mjs';
-import { IMPACT_FILE, TIMES_FILE } from './testtimes.mjs';
+import { depsOf, readsFiles } from './testcache.mjs';
+import { IMPACT_FILE, TIMES_FILE, classify } from './testtimes.mjs';
 import { RUNNERS } from './testimpact.mjs';
 
 export const CASES_FILE = 'cases.json', TIMES_RUNS = 5;
@@ -90,11 +92,18 @@ export function scanCases(file, text) {
 }
 
 const isSource = f => !f.startsWith('tests/') && !/(^|\/)fixtures\//.test(f);
-/** impact.json's body: per source file the test files whose static deps reach it; uncovered = the code files (code) no test reaches */
+/** impact.json's body: per source file the test files whose static deps reach it, and per non-code file (classify: null - a workflow, a
+ *  doc) the tests whose `// reads:` header declares it; uncovered = the code files (code) no test's deps reach. A reads edge is no
+ *  coverage of code: it never lands on a code file, and uncovered is taken from the deps alone (lint / layout declare `**`) */
 export function impactOf(ix, tests, code = []) {
-  const sources = {};
-  for (const t of [...tests].sort()) for (const f of depsOf(t, ix)) if (isSource(f) && ix.read(f) !== null) (sources[f] ??= []).push(t);
-  return { suite: 'node:test', sources: Object.fromEntries(Object.entries(sources).sort(([a], [b]) => a.localeCompare(b))), uncovered: code.filter(f => isSource(f) && !(f in sources)).sort() };
+  const deps = {}, reads = {}, add = (m, f, t) => { if (!(m[f] ??= []).includes(t)) m[f].push(t); };
+  for (const t of [...tests].sort()) {
+    for (const f of depsOf(t, ix)) if (isSource(f) && ix.read(f) !== null) add(deps, f, t);
+    for (const f of readsFiles(t, ix)) if (isSource(f) && classify(f) === null && ix.read(f) !== null) add(reads, f, t);
+  }
+  const sources = { ...deps };
+  for (const [f, ts] of Object.entries(reads)) sources[f] = [...new Set([...(sources[f] ?? []), ...ts])].sort();
+  return { suite: 'node:test', sources: Object.fromEntries(Object.entries(sources).sort(([a], [b]) => a.localeCompare(b))), uncovered: code.filter(f => isSource(f) && !(f in deps)).sort() };
 }
 export const median = xs => { const s = xs.filter(Number.isFinite).sort((a, b) => a - b), h = s.length >> 1; return !s.length ? null : s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2; };
 /** times.json's body from the cache log rows (oldest first): per test file of `tests` the median ms of its last TIMES_RUNS `ran` rows */

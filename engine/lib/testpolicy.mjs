@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { classify } from './testcmd.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
-import { isBrowserTest, importsOf, pickTests } from './cisuite.mjs';
+import { isBrowserTest, importsOf, pickTests, readsOf, readsMatch } from './cisuite.mjs';
 import { workInit, onWork } from './progress.mjs';
 import { TIMES_FILE, IMPACT_FILE } from './testtimes.mjs';
 import { fwd } from './config.mjs';
@@ -91,7 +91,7 @@ const stem = f => (/\.m?js$/.test(f) && !f.startsWith('tests/') ? f.split('/').p
  * mode light: the test files that DIRECTLY cover the changed files - every changed test file, then per changed source module `per` (1)
  * of: its own test (<stem>.test.mjs), the tests named after it (<stem>-*.test.mjs), the tests that import it directly (when an impact
  * map from `norn tests index` exists, only those its coverage confirms); fastest first by `ms` (file -> its median ms, times.json). A
- * module none of them reaches is named in `none` (left to CI). mode changed: ci-suite's pick (cisuite.mjs pickTests, importers capped
+ * module none of them reaches is named in `none` (left to CI). Besides: every test whose `// reads:` header matches a changed file. mode changed: ci-suite's pick (cisuite.mjs pickTests, importers capped
  * at 20). -> { run: [test files], none: [changed modules no test covers directly], left: [importers past the cap] }
  */
 export function pickRun({ mode, changed, tests, read, impact = null, ms = {}, per = 1 }) {
@@ -109,6 +109,8 @@ export function pickRun({ mode, changed, tests, read, impact = null, ms = {}, pe
     if (!pick.length) none.push(f);
     for (const t of pick) run.add(t);
   }
+  // DEC-a-648: a test that declares a changed file in its `// reads:` header asserts on its content - it runs, whatever the per pick
+  for (const t of all) { const rd = readsOf(src(t)); if (rd.length && ch.some(f => readsMatch(rd, f))) run.add(t); }
   return { run: [...run].sort(), none, left: [] };
 }
 /** pickRun over a repo's own tests/*.test.mjs (none when it has no tests/ folder: a project that is not node-tested), with the last

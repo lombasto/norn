@@ -1,6 +1,7 @@
 // S8 + META-GTP-CI 3 CI workflow lint (no actionlint on this machine; Node built-ins only): the workflow runs `norn smoke` on the three desktop
 // OSes, and ONLY on demand or on a push to main - a lane branch push must start no hosted run (spending is owner-only).
 // META-PR-FAST (RM-29): a pull request runs only pr.yml's fast check; the full suite runs on a push to main and nightly (ci.yml).
+// reads: .github/workflows/*.yml
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
