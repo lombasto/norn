@@ -10,7 +10,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkTmp } from './helpers/tmp.mjs';
-import { record, loadState, laneId } from '../engine/lib/records.mjs';
+import { record, loadState, laneId, readEvents, readEventsAsync } from '../engine/lib/records.mjs';
 import { casesOf, actionsOf, foldLines } from '../engine/lib/intents.mjs';
 import { foldedSources, foldRefusal, pairKey } from '../engine/lib/collide.mjs';
 import { foldPass } from '../engine/lib/lifecycle.mjs';
@@ -190,4 +190,13 @@ test('a run started on the kept lane after a fold has the fold line in its promp
   assert.doesNotMatch(spec(r2.run).promptText ?? '', /FOLDED-web-runs/);
   const t1 = performance.now();
   while (!settled(f.items()[r2.run])) { if (performance.now() - t1 > 30000) throw new Error('timeout waiting'); await new Promise(res => setImmediate(res)); }
+});
+
+test('a records read that meets another process append in flight (a torn last line, its lock held) reads again once the writer is done; torn with no writer: an integrity error', async () => {
+  const t = mkTmp('meta-torn-'), file = path.join(t, 'runs.jsonl'), lock = path.join(t, 'runs.lock'), line = JSON.stringify({ kind: 'run', ev: 'start', id: 'RUN-1' });
+  put(file, line.slice(0, 9)); put(lock, JSON.stringify({ pid: 0, ts: new Date().toISOString() }));   // the writer: half its line on disk, its lock held
+  setTimeout(() => { fs.appendFileSync(file, line.slice(9) + '\n'); fs.unlinkSync(lock); }, 60);
+  assert.deepEqual(await readEventsAsync(file), [JSON.parse(line)], 'the whole line once the lock is free');
+  put(file, line.slice(0, 9));
+  assert.throws(() => readEvents(file), /torn last line/, 'no writer: still torn under the lock');
 });

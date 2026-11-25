@@ -42,8 +42,8 @@ function history(dir) {
     return { sha, t: Number(ct) * 1000, day: new Date(Number(ct) * 1000).toISOString().slice(0, 10), subject, stat: rows.map(r => r.split('\t')).filter(r => r.length === 3 && r[0] !== '-').map(([a, d, f]) => [f, Number(a), Number(d)]) };
   });
 }
-/** Borda points per value: the values below it + half the others equal to it (ties share the mean rank) */
-function borda(vals) {
+/** Borda points per value: the values below it + half the others equal to it (ties share the mean rank); codesignals.mjs ranks with it too */
+export function borda(vals) {
   const s = [...vals].sort((a, b) => a - b), lo = v => { let i = 0; while (i < s.length && s[i] < v) i++; return i; }, hi = v => { let i = lo(v); while (i < s.length && s[i] === v) i++; return i; };
   const m = new Map();
   return vals.map(v => { if (!m.has(v)) { const a = lo(v), b = hi(v); m.set(v, a + (b - a - 1) / 2); } return m.get(v); });
