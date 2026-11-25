@@ -8,6 +8,7 @@ import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { record, readEvents, recordsFile, fold, loadShared, RecordError, mailboxOf, homeOf, roleAddr, idNum as num, MAIL_BODY_MAX, homeOfId } from './records.mjs';
 import { hookEntry } from './hookbin.mjs';
+import { readJsonS } from './fsnap.mjs';
 const fwd = p => String(p).replace(/\\/g, '/');
 const drop = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== ''));
 
@@ -121,12 +122,11 @@ function whereOf(state, home, m, seenOf) {
   const held = seen.held?.[home.id]?.['mail.jsonl'], seq = m.history?.[0]?.seq, polled = `${dest} last polled ${seen.polled_at ?? 'unknown'}`;
   return Number.isInteger(held) && Number.isInteger(seq) && held >= seq ? `at ${dest}, ${polled}` : `sent, ${polled}`;
 }
-const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
 
 /** rows for `norn mail list`: { id, state, from, to, subject, urgent, created, delivered_to, nudged, body, where, age_min (at now, ms) } */
 export function listMail(state, { to, open, now = Date.now() } = {}) {
   const home = homeOf(state), want = to ? qualify(to, home?.id) : null, seen = new Map();
-  const seenOf = h => { if (!seen.has(h)) seen.set(h, readJson(path.join(state, 'homes', h, 'seen.json'))); return seen.get(h); };
+  const seenOf = h => { if (!seen.has(h)) seen.set(h, readJsonS(path.join(state, 'homes', h, 'seen.json'))); return seen.get(h); };
   return Object.values(loadMail(state)).filter(m => (!want || stored(state, m) === want) && (!open || m.state !== 'acked')).sort(byId)
     .map(m => ({ id: m.id, state: m.state, from: m.data.from, to: m.data.to, subject: m.data.subject, urgent: !!m.data.urgent, created: m.created,
       ...(m.deliver?.run ? { delivered_to: m.deliver.run } : {}), ...(m.nudge ? { nudged: m.nudge.run } : {}),
