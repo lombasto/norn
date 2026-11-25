@@ -319,7 +319,33 @@ No class is below the bar. The fixtures grade 100 % in every class (tests/code-g
 <git common dir of the engine's clone>/norn/rust/
   bin/norn-code-<source sha12>[.exe]   the binary of one source content of engine/code-rs (every file but target/, Cargo.lock included)
   target/code/                         cargo's one target dir for the part (--target-dir): its incremental cache, shared by every checkout
+  code.lock                            the part's build lock (below); hook.lock is norn-hook's
 ```
+
+- What reads which binary: every reader (codegraph.mjs, the supervisor, `norn done`, setup, smoke, the hooks of a claude run)
+  reads `bin/<bin>-<source sha12>` through `binOf`. A checkout's own engine/code-rs/target/release (or engine/hook-rs/...), which a
+  plain `cargo build` in the crate writes, is read by nothing since #235; nor is `target/code/release/norn-code` itself, which is
+  only the file a build copies from.
+- The fingerprint drop (#238): cargo's fingerprint of a crate ignores the crate's path, so in the shared target dir another
+  checkout's build of the same package leaves a fingerprint whose dep-info lists only ITS files. A build of this checkout's sources
+  (a new module is not among those files) was then called fresh, and the other checkout's binary copied out under this source's
+  hash. So before cargo runs, a part with no binary for its sources drops its own `release/.fingerprint/<bin>-<16 hex>` dirs: this
+  crate always compiles, its dependencies keep their fingerprints and stay built.
+- The build lock: builds of different sources of one part share the one output file `target/<part>/release/<bin>`, and cargo's
+  own lock covers its build only. Between its release and the copy-out, another checkout's build could replace that file, and the
+  wrong binary would be stored under this source's hash. `ensurePart` and `ensurePartAsync` hold `<store>/<part>.lock` (records.mjs
+  `withLock` / `withLockAsync`) from before the fingerprint drop until the content-named file is in place:
+  - a part whose file exists takes no lock; a second build of the SAME sources waits, then finds the file and builds nothing;
+  - a lock older than `BUILD_MS` + 2 min (rustbin.mjs `LOCK`: a holder's cargo dies at `BUILD_MS`) is a dead holder's and is
+    broken; a waiter gives up after twice that, with ONE reason naming the lock file;
+  - the async form waits on a timer, so a supervisor that waits keeps its heartbeat; the sync form (setup, smoke) blocks.
+- Path length on Windows, measured (2026-11-25, this Cargo.lock, a cold build of engine/code-rs into `<x>/.git/norn/rust/target/code`
+  with every file it created logged, short-lived ones included): the longest path below the clone folder is 178 characters
+  (`.git\norn\rust\target\code\release\build\tree-sitter-javascript\<16 hex>\out\tree_sitter_javascript-<16 hex>.tree_sitter_javascript.<16 hex>-cgu.0.rcgu.o`,
+  a rustc object that is gone once the build ends); the longest file a finished target dir keeps is 134. Windows' MAX_PATH is 259
+  characters plus the terminator, so a clone whose folder is at most 81 characters long (259 - 178) builds with no file past it.
+  rustc itself writes longer paths, but the MSVC linker does not: a cold clone under a 124-character folder failed with LNK1104 on
+  a 262-character file (138 below the clone). A crate or Cargo.lock change can move these numbers; keep a clone's folder short.
 
 - One store for the main checkout and every lane worktree of the clone: a worktree whose engine/code-rs equals main's reads the
   same file and builds nothing. A change to code-rs (a pull, or a lane's own edit) names a new file; the old one stays for the
