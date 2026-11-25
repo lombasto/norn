@@ -70,6 +70,7 @@ import { parseLedgerLine } from './ledger.mjs';
 import { ledgerConfig } from '../lib/ledger.mjs';
 import { loopOf, renameHome } from '../lib/sync.mjs';
 import { codeAt } from '../lib/codecli.mjs';
+import { pageTargets } from '../lib/codetargets.mjs';
 import { graphMapPage } from '../lib/codemapgraph.mjs';
 import { isStale, leaderKey } from '../lib/claims.mjs';
 import { insViewFile } from '../lib/guard-scan.mjs';
@@ -1142,6 +1143,7 @@ export function createDashboard(o) {
     const bf = path.join(p.state, 'advisory', 'guard-baseline.json');
     let at = null; try { at = Date.parse(JSON.parse(await readA(bf, 'null')).at); } catch { at = null; }
     const meter = !slop ? null : part('meter', () => meterView(p), null);
+    const targets = !slop ? null : part('targets', () => pageTargets(p.state), null);   // RM-a-65: what `norn code targets` stored, for To fix
     const refused = !slop ? [] : part('scope', () => { const h = laneHooks(p.state); return openRefusals(refusals(p.state, { since: Date.now() - REFUSAL_DAYS * 86400000 }), runsOf(st(p)), { landed: (l, r) => h.landed(l, r) || h.merged(l, r) }); }, []);   // META-DOD 2; owner 11-24: only the refusals that can still change something
     // RM-27: a SloppaChoppa row carries its rule's what / why / fix and the waiver path (the same text norn slop check prints)
     const told = new Map(holds.flatMap(h => h.blocks.map(b => ['S-' + b.fp, { ...explainOf(b.rule, p.project_dir), waiver: waiverCmd(b) }])));
@@ -1152,7 +1154,7 @@ export function createDashboard(o) {
     const v = guardView(rows, { rules: ins?.rules?.counts ?? null, slop }), sent = fixSent(p, v.rows || []);
     // ui-spend-slop: the closed findings per type (lib/slophist.mjs), stepped only on a whole view - a pending scan or a failed part would close ids it merely lacks
     const hist = await slopHist(p.state, rows, { types: v.types.map(t => t.type), step: !ig.pending && !errors.length }).catch(() => null);
-    return { project: p.name, ...v, rows: sent.rows, sent: sent.sent, fixcards: sent.cards ?? [], pending: ig.pending, slop, voice: pol.voice, precision, errors, hist, meter };
+    return { project: p.name, ...v, rows: sent.rows, sent: sent.sent, fixcards: sent.cards ?? [], pending: ig.pending, slop, voice: pol.voice, precision, errors, hist, meter, targets };
   }
   // Fix all sent and not done yet: every ACTIVE directive a Send wrote (data.fixall) holds its findings. Those rows are marked sent
   // (sent: DEC-n) - Fix all no longer offers them, the page says they are with the fixer - until the directive is closed or the findings

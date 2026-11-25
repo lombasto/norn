@@ -18,9 +18,9 @@ import crypto from 'node:crypto';
 // every threshold of this module (px are the SVG's own units; the page scales the drawing to its frame's width)
 export const MAP_GRAPH = { area_depth: 2, band_min_px: 2, band_max_px: 26, cell: 10, cols_max: 16, pad: 8, head: 22, gap_x: 28, gap_y: 90, sweeps: 6, char_px: 7.5 };
 export const graphMapDir = state => path.join(state, 'code', 'graphmap');
-const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+export const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const XML = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }, xe = s => String(s).replace(/[&<>"']/g, c => XML[c]);   // SVG text + attributes: XML's own entity for '
-const r1 = n => Math.round(n * 10) / 10;
+export const r1 = n => Math.round(n * 10) / 10;
 
 /** a project path -> its area: the folder cut to MAP_GRAPH.area_depth segments; '(root)' for a file in the project root */
 export function areaOf(file) {
