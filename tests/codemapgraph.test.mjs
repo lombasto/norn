@@ -1,14 +1,16 @@
 // RM-a-66 (Code > Map from the code graph, no model): lib/codemapgraph.mjs over a SYNTHETIC Graph (the reader's shape, docs/code-graph.md) -
 // the area rule (folders first), the layered layout (importers above what they import), bands as wide as the import edges between two
 // areas, the click's dependents (direct + transitive) shipped as data, the drawn file under <state>/code/graphmap with its CSP hashes, an
-// n/a graph stored as n/a (never a guess), and GET /code-map/?map=graph served under codemap.mjs's mapCsp with an ETag. Sandbox only (mkTmp).
+// n/a graph stored as n/a (never a guess), and GET /code-map/ (Code > Map) served under mapCsp with an ETag;
+// `norn code map` and codeAt's map part. Sandbox only (mkTmp).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
-import { areaOf, layoutMap, renderMap, drawGraphMap, graphMapAt, graphMapPage, MAP_GRAPH } from '../engine/lib/codemapgraph.mjs';
+import { areaOf, layoutMap, renderMap, drawGraphMap, graphMapAt, graphMapPage, mapCsp, MAP_GRAPH } from '../engine/lib/codemapgraph.mjs';
+import { codeCmd, codeAt } from '../engine/lib/codecli.mjs';
 
 test.after(cleanTmp);
 const C = 'c0ffee'.padEnd(40, '0');
@@ -67,7 +69,7 @@ test('renderMap: one self-contained page - SVG areas + bands, the dependents as 
   assert.equal(renderMap(layoutMap(graph())).html, html, 'deterministic');
 });
 
-test('drawGraphMap: stores index.html + map.json under <state>/code/graphmap; an n/a graph is stored as n/a; GET /code-map/?map=graph under mapCsp with an ETag', () => {
+test('drawGraphMap: stores index.html + map.json under <state>/code/graphmap; an n/a graph is stored as n/a; GET /code-map/ under mapCsp with an ETag', () => {
   const state = path.join(mkTmp('cmg-'), 'state');
   assert.equal(graphMapAt(state), null); assert.equal(graphMapPage(state).status, 404);
   const r = drawGraphMap({ state, graph: graph() });
@@ -78,9 +80,26 @@ test('drawGraphMap: stores index.html + map.json under <state>/code/graphmap; an
   const p = graphMapPage(state), csp = p.headers['Content-Security-Policy'];
   assert.equal(p.status, 200); assert.equal(p.headers['content-type'], 'text/html; charset=utf-8');
   assert.match(csp, /default-src 'none'/); assert.match(csp, /script-src 'sha256-/); assert.match(csp, /connect-src 'none'/); assert.match(csp, /frame-ancestors 'self'/); assert.match(csp, /sandbox allow-scripts/);
+  assert.match(csp, /form-action 'none'/); assert.match(csp, /base-uri 'none'/); assert.equal(p.headers['Cache-Control'], 'no-cache');
   assert.doesNotMatch(csp, /unsafe/);
   assert.match(p.headers.ETag, /^"[0-9a-f]{16}"$/); assert.equal(graphMapPage(state, p.headers.ETag).status, 304);
   const n = drawGraphMap({ state, graph: { ok: false, why: 'norn-code not built' } });
   assert.equal(n.drawn, false); assert.equal(graphMapAt(state).na, 'norn-code not built');
   assert.equal(graphMapPage(state).status, 404, 'n/a: no stale page served as current');
+});
+
+test('mapCsp: the meta policy kept, network / forms / base shut, framed only by the dashboard, sandboxed with scripts only', () => {
+  assert.equal(mapCsp(''), "default-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'; sandbox allow-scripts");
+  const c = mapCsp("default-src 'self'; script-src 'sha256-AAAA'; connect-src 'self' https://x.example; frame-ancestors *");
+  assert.match(c, /^default-src 'self'; script-src 'sha256-AAAA'; /); assert.match(c, /connect-src 'none'/); assert.doesNotMatch(c, /connect-src 'self'|x\.example|frame-ancestors \*/);
+});
+
+test('norn code map: no flags; it draws the import-graph map; codeAt map part = that map line', async () => {
+  const state = path.join(mkTmp('cmg-'), 'state'), errs = [];
+  assert.equal(await codeCmd(['map', '--refresh'], { out: () => {}, err: s => errs.push(s), where: () => ({ state }) }), 2, 'map takes no --refresh');
+  assert.match(errs.join('\n'), /norn code map \[--project P/);
+  assert.deepEqual(await codeAt({ name: 'kestrel', state }, new URL('http://x/api/code?part=map')), { map: null });
+  drawGraphMap({ state, graph: graph() });
+  const { map } = await codeAt({ name: 'kestrel', state }, new URL('http://x/api/code?part=map'));
+  assert.deepEqual([map.sha, map.files, map.areas, map.na], [C.slice(0, 12), 7, 4, null]);
 });
