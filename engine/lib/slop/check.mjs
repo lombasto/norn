@@ -15,7 +15,7 @@ import { packOf, LINTERS } from './lang/index.mjs';
 import { lint, dup, exportsKind, refs, depLock, companion } from './kinds.mjs';
 import { model } from './voice.mjs';
 import { registerKind, loadRegister, registerFile } from './register.mjs';
-import { importGraph, cycles } from './graph.mjs';
+import { graphAt, cycles, ALL_KINDS, LOAD_KINDS } from '../codegraph.mjs';
 import { readText, readdirS, existsS, prime } from '../fsnap.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -210,14 +210,22 @@ export function shimFindings(rule, text, file) {
   return [...byLine.values()].sort((a, b) => a.line - b.line);
 }
 
-// the edges of the files under the roots, each read by its language pack (S3: JS, Python, Rust); a target is any file of the tree
-const ruleGraph = (rule, ctx, side) => { const tree = ctx.tree(side), files = tree.filter(f => rule.roots.some(r => f.startsWith(r)) && matchAny(rule.files, f) && !matchAny(rule.exclude, f) && packOf(f)); return importGraph(files, ctx.texts(side, files), tree); };
+// K10's edges: the code graph (codegraph.mjs) of the side's commit, kept to the edges from the rule's files (roots, files, exclude).
+// Layers count the static load-time kinds: a dynamic import, a Python import inside a function and a package's __init__ are no layer
+// edge. Cycles run over LOAD_KINDS between the rule's files. No graph (norn-code not built, an index that failed): the rule could not run
+const LAYER_KINDS = new Set(ALL_KINDS.filter(k => !['dynamic', 'import-local', 'package-init'].includes(k)));
+function ruleGraph(rule, ctx, side) {
+  const g = graphAt({ state: ctx.state || undefined, repo: ctx.repo, at: side === 'head' ? ctx.head : ctx.base });
+  if (!g.ok) throw new Error(`code graph: ${g.why}`);
+  const mine = f => rule.roots.some(r => f.startsWith(r)) && matchAny(rule.files, f) && !matchAny(rule.exclude, f) && g.files.has(f);
+  return { ...g, edges: g.edges.filter(e => mine(e.from)), mine };
+}
 function layering(rule, ctx, side) {
-  const edges = ruleGraph(rule, ctx, side), out = [];
-  for (const [f, es] of edges) for (const e of es) for (const fb of rule.forbid) {
-    if (matchAny([fb.from], f) && matchAny(fb.to, e.to)) out.push({ file: f, line: e.line, msg: `${f} must not import ${e.to} (${fb.from} -> ${fb.to.join(' | ')})`, snippet: e.text });
+  const g = ruleGraph(rule, ctx, side), out = [];
+  for (const e of g.edges) if (LAYER_KINDS.has(e.kind)) for (const fb of rule.forbid) {
+    if (matchAny([fb.from], e.from) && matchAny(fb.to, e.to)) out.push({ file: e.from, line: e.line, msg: `${e.from} must not import ${e.to} (${fb.from} -> ${fb.to.join(' | ')})`, snippet: norm(lineText(ctx.text(side, e.from) || '', e.line)) });
   }
-  for (const c of cycles(edges)) out.push({ file: c[0], line: 1, msg: `import cycle: ${c.join(' -> ')}`, snippet: 'cycle ' + c.join(' ') });
+  for (const c of cycles({ ...g, edges: g.edges.filter(e => g.mine(e.to)) }, { kinds: LOAD_KINDS }).cycles) out.push({ file: c[0], line: 1, msg: `import cycle: ${c.join(' -> ')}`, snippet: 'cycle ' + c.join(' ') });
   return out;
 }
 
