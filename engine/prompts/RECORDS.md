@@ -68,6 +68,8 @@ norn rec add decision ... --answers Q-n --owner-words "<owner words>"   (an owne
   pick on a lane with an open Q named neither by --answers nor --not-an-answer)
 norn rec answer Q-n --from DEC-m   norn rec not-an-answer DEC-m --q Q-n --why W   (the digest row "Q-n open, possibly answered by DEC-m")
 norn rec add directive --text "..."            (owner contexts only: dashboard / interactive controller relaying)
+  a decision / directive that governs code: --paths engine/lib/digest.mjs,engine/prompts (repo-relative files or folders it governs)
+  a process ruling (queue order, dispatch, "no second stage"): none. The add warns when its text names repo files and has no --paths
 norn rec answer Q-7 --choice a --text "<owner words>" --via chat    norn rec answer --each "Q-7=a,Q-8=b" --text "<owner words>" --via chat
 norn rec apply Q-7 --refs DEC-n,RUN-n     norn rec supersede DIR-2 --by DIR-3 --why "its own text: supersedes the line above"
 norn rec list [--open] [--kind Q|DEC|DIR|L] [--lane x] [--json]     norn rec show Q-7 (full history)
