@@ -8,8 +8,9 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { loadRules, slopCheck, fingerprint, matchAny } from '../engine/lib/slop/check.mjs';
 import { makeTool } from '../engine/lib/slop/tools.mjs';
-import { VOICE, voicePrompt, parseHunks, voiceRoute, branchClass } from '../engine/lib/slop/voice.mjs';
-import { hostWrite, voiceFindings, voicePrecision, RATING } from '../engine/lib/slop/host.mjs';
+import { VOICE, voicePrompt, parseHunks, voiceRoute, voiceCall, branchClass } from '../engine/lib/slop/voice.mjs';
+import { hostWrite, voiceFindings, voicePrecision, voiceReadsToday, RATING } from '../engine/lib/slop/host.mjs';
+import { endCheck } from '../engine/lib/slop/runend.mjs';
 import { guardRows } from '../engine/lib/guardview.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
@@ -100,14 +101,51 @@ test('the run end calls the routed executor once, no tools (the fake executor); 
   assert.deepEqual(none.blocks, [], 'the voice is advisory: it holds nothing (SPEC 3.4)');
 });
 
-test('the route: another model family than the author when the policy table has one, else the review route', () => {
-  const project = { policy: {} };   // the defaults: review = codex-sol, critical_implementation = implementer (claude) with a model
-  assert.equal(voiceRoute({ project, author: 'claude' }).executor, 'codex-sol');
+test('the route carries its mode: another family with no-tools, else another family read-only, else the author family no-tools; never one that can do neither', () => {
+  const project = { policy: {} };   // the defaults: review = codex-sol (no no-tools mode), critical_implementation = implementer (claude) with a model
+  const ro = voiceRoute({ project, author: 'claude' });
+  assert.deepEqual([ro.executor, ro.mode, ro.cap], ['codex-sol', 'read-only', 15], 'codex has no no-tools mode: read-only, the default daily cap');
   const other = voiceRoute({ project, author: 'codex-sol' });
-  assert.equal(other.family, 'claude');
+  assert.deepEqual([other.family, other.mode], ['claude', 'no-tools']);
   assert.ok(other.model);
-  const one = { policy: { executors: Object.fromEntries(['implementation', 'critical_implementation', 'review', 'diagnosis', 'planning', 'chores', 'passfail', 'images', 'docs'].map(c => [c, { executor: 'codex-sol', model: 'gpt-x', effort: 'low' }])) } };
-  assert.deepEqual([voiceRoute({ project: one, author: 'codex-sol' }).executor, voiceRoute({ project: one, author: 'codex-sol' }).model], ['codex-sol', 'gpt-x']);
+  const withFake = { policy: { executors: { review: { executor: 'codex-sol', model: 'gpt-x', effort: 'low' }, docs: { executor: 'fake', model: '', effort: '' } }, slop: { voice_reads_per_day: 4 } } };
+  assert.deepEqual(['executor', 'mode', 'cap'].map(k => voiceRoute({ project: withFake, author: 'claude' })[k]), ['fake', 'no-tools', 4], 'another family with no-tools beats the review route read-only');
+  const all = c => ({ policy: { executors: Object.fromEntries(['implementation', 'critical_implementation', 'review', 'diagnosis', 'planning', 'chores', 'passfail', 'images', 'docs'].map(k => [k, c])) } });
+  const own = voiceRoute({ project: all({ executor: 'claude', model: 'claude-x', effort: 'low' }), author: 'claude' });
+  assert.deepEqual([own.executor, own.mode], ['claude', 'no-tools'], 'no other family: the author family without tools');
+  assert.equal(voiceRoute({ project: all({ executor: 'codex-sol', model: 'gpt-x', effort: 'low' }), author: 'codex-sol' }), null, 'only codex for a codex author: no route (never thrown at)');
+});
+
+test('a read-only read runs in its own empty folder; the prompt rides stdin, the brief and answer files sit outside it', () => {
+  const route = voiceRoute({ project: { policy: {} }, author: 'claude' });
+  const at = mkTmp('slop-voice-call-'), c = voiceCall({ ...route, exe: 'codex' }, at);
+  assert.ok(c.cmd.args.includes('read-only') && !c.cmd.args.includes('workspace-write'), c.cmd.args.join(' '));
+  assert.deepEqual(fs.readdirSync(c.cwd), [], 'nothing in the folder the voice reads');
+  assert.ok(!c.brief.startsWith(c.cwd) && !c.final.startsWith(c.cwd));
+  assert.equal(voiceCall({ executor: 'fake', family: 'fake', model: 'fake', effort: 'low', mode: 'no-tools' }, at).cmd.args.includes('--read-only'), false);
+});
+
+test('the daily cap: the reads of the day are counted from the stored checks; over it each model rule is the WARN could-not-run, no call', () => {
+  const repo = repoOf({ 'src/a.mjs': 'export const a = 1;\n' }, { 'src/a.mjs': 'export const a = 2;\n' });
+  const state = mkTmp('slop-voice-cap-'), ans = path.join(mkTmp('slop-voice-ans-'), 'answer.md');
+  fs.writeFileSync(ans, answer([]));
+  const route = { ...voiceRoute({ project: { policy: { executors: { review: { executor: 'fake', model: '', effort: '' } } } }, author: 'claude' }), cap: 2 };
+  hostWrite(state, { type: 'check', branch: 'feat/old', base: 'b'.repeat(40), head: 'o'.repeat(40), hash: 'x', blocks: [], findings: [], voice_reads: 1, at: '2001-01-01T00:00:00.000Z' });
+  hostWrite(state, { type: 'check', branch: 'feat/w', base: 'b'.repeat(40), head: 'w'.repeat(40), hash: 'x', blocks: [], findings: [], voice_reads: 1 });
+  assert.equal(voiceReadsToday(state), 1, 'only today (UTC) counts');
+  const was = process.env.FAKE_RESULT;
+  process.env.FAKE_RESULT = ans;
+  try {
+    const one = endCheck({ repo, state, voice: route });
+    assert.ok(!one.result.findings.some(f => f.unrun), 'under the cap: read');
+    assert.equal(one.check.voice_reads, 1);
+    assert.equal(voiceReadsToday(state), 2);
+    git(repo, 'commit', '-q', '--allow-empty', '-m', 'again');
+    const over = endCheck({ repo, state, voice: route }), unrun = over.result.findings.filter(f => f.unrun);
+    assert.deepEqual(unrun.map(f => [f.rule, f.level, f.msg]), MODEL.map(m => [m.id, 'WARN', 'could not run: daily cap 2 reached']));
+    assert.equal(over.check.voice_reads, undefined, 'no call: no read counted');
+    assert.deepEqual(over.result.blocks, []);
+  } finally { if (was === undefined) delete process.env.FAKE_RESULT; else process.env.FAKE_RESULT = was; }
 });
 
 // ---------- ratings: thumbs on a model finding, per-rule precision, the promotion / demotion line (records the owner makes) ----------
