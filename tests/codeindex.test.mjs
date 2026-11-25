@@ -92,14 +92,15 @@ test('codecli: history writes <state>/code/index.json; codeAt serves the summary
   assert.deepEqual(await codeAt(none, new URL('http://x/api/code?part=files')), { list: null });
 });
 
-test('tickCode: starts `norn code history` detached when the sha moved, not again within 10 minutes, not when the index is at HEAD', () => {
+test('tickCode: starts `norn code history` (and, with no map yet, the first code map) detached when the sha moved, not again within 10 minutes, not when the index is at HEAD', () => {
   const { repo, state, g } = world(), calls = [], spawnFn = (exe, args) => { calls.push(args); return { pid: 7 }; };
   const p = { file: path.join(repo, 'kestrel.json'), root: repo };
-  assert.equal(tickCode(p, state, { metaCmd: 'norn.mjs', spawnFn, now: NOW }), 'code history: started pid 7');
+  assert.equal(tickCode(p, state, { metaCmd: 'norn.mjs', spawnFn, now: NOW }), 'code history: started pid 7; code map: first map started pid 7');
+  assert.deepEqual(calls.map(a => a.slice(1, 4)), [['code', 'history', '--project'], ['code', 'map', '--refresh']]);
   assert.deepEqual(calls[0], ['norn.mjs', 'code', 'history', '--project', p.file, '--state', state]);
   assert.equal(tickCode(p, state, { metaCmd: 'norn.mjs', spawnFn, now: NOW + 5 * 60e3 }), null, 'one started 5 min ago');
   fs.mkdirSync(path.join(state, 'code'), { recursive: true });
   fs.writeFileSync(path.join(state, 'code', 'index.json'), JSON.stringify({ sha: g(['rev-parse', '--short=12', 'HEAD']).trim(), files: [] }));
   assert.equal(tickCode(p, state, { metaCmd: 'norn.mjs', spawnFn, now: NOW + 60 * 60e3 }), null, 'the index is at HEAD');
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2, 'history once, first map once');
 });
