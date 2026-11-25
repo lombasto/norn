@@ -133,8 +133,8 @@ function ageCell(n, ctx) {
 }
 // pace: a live run's pace chip, time bar, checklist and why slow (or what it does now); an ended run's checklist and why it ended;
 // a queued run's estimate, start, hold-ups and the priority control (Plan's Up next, now here and on Lanes)
-function paceCell(n, d, ctx) {
-  const s = runStateOf(n), now = ctx.now;
+function paceCell(n, d) {
+  const s = runStateOf(n);
   if (s === 'queued') return `<td class="rpace" data-label="pace">${queuedCell(n, d)}</td>`;
   if (s === 'running') return `<td class="rpace" data-label="pace"><div class="rtimes small">${paceChip(n)}${items(n)}</div>${n.handoff ? `<div class="rline small rho">${hoChip(n.handoff, n.id)}</div>` : ''}${nowLine(n)}${speedLine(n.speed)}</td>`;
   return `<td class="rpace" data-label="pace"><div class="rtimes small">${items(n)}</div>${whyEnded(n) ? `<div class="rline small">${whyEnded(n)}</div>` : ''}</td>`;
@@ -147,7 +147,7 @@ function row(n, d, ctx, sel) {
     <td class="rwho" data-label="run">${projTag(ctx, n.project)}<span class="id">${esc(n.id)}</span> ${homeChip(n)}${guardChips(n, d, false)}${kids(n) ? `<div>${kids(n)}</div>` : ''}</td>
     ${agentCell(n)}${prioCell(n, d)}<td class="rlane" data-label="lane">${laneCard(n.lane_card, runLane(n))}</td>
     <td class="rmodel small" data-label="model">${exChip(n.executor, n.model, n.effort)}</td>
-    ${ageCell(n, ctx)}${actCell(n, 'tools')}${actCell(n, 'words')}${actCell(n, 'commits')}${paceCell(n, d, ctx)}</tr><!--/row-->`;
+    ${ageCell(n, ctx)}${actCell(n, 'tools')}${actCell(n, 'words')}${actCell(n, 'commits')}${paceCell(n, d)}</tr><!--/row-->`;
 }
 // a queued run's Up next entry in Plan (its project's part)
 function planOf(n, d) {
