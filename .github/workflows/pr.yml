@@ -21,6 +21,11 @@ jobs:
   # the locked tool set tools/lint (npm ci --ignore-scripts) once per lock, and actions/cache carries it to the next run. META_ROOT
   # is set on the step because a job's env has no `runner` context and GitHub rejects the whole file for it (the PR check did not
   # run from 11-20 to this fix).
+  # Norn's Rust parts (slop: norn-code, the code graph the imports rules such as K10 read; smoke: both): one step pattern in both jobs,
+  # Norn's own build (rustbin.mjs ensurePart: cargo build --release --locked into the clone's store <.git>/norn/rust, the binary named
+  # by its source hash) with the runner's cargo (ubuntu-latest ships rustup; the repo pins no toolchain). actions/cache carries the
+  # store's bin/ keyed by the parts' sources (target/ left out, as sourceHash does), so a PR that does not touch Rust builds nothing;
+  # on a miss the step builds and the cache stores the binary. A part that cannot be had fails the step: a rule that cannot run is no pass.
   slop:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -36,6 +41,23 @@ jobs:
         with:
           path: ${{ runner.temp }}/norn/state/tools
           key: slop-tools-${{ runner.os }}-${{ hashFiles('tools/lint/package-lock.json') }}
+      - uses: actions/cache@v4
+        with:
+          path: .git/norn/rust/bin
+          key: rust-code-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('engine/code-rs/**', '!engine/code-rs/target/**') }}
+      - name: Norn's Rust parts (norn-code) - ensurePart, built only on a cache miss
+        env:
+          PARTS: code
+        shell: bash
+        run: |
+          cargo --version
+          node --input-type=module -e '
+            import { ensurePart, binOf } from "./engine/lib/rustbin.mjs";
+            for (const p of process.env.PARTS.split(" ")) {
+              const t0 = Date.now(), r = ensurePart(p, { err: s => console.error(s), start: () => console.log("building " + p) });
+              if (!r.ok) { console.error(r.why); process.exit(1); }
+              console.log(p + ": " + binOf(p) + (r.built ? " built" : " cached") + " in " + ((Date.now() - t0) / 1000).toFixed(1) + " s");
+            }'
       - name: slop check of the PR's diff from its merge base
         env:
           META_ROOT: ${{ runner.temp }}/norn
@@ -51,6 +73,23 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - uses: actions/cache@v4
+        with:
+          path: .git/norn/rust/bin
+          key: rust-hook-code-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('engine/hook-rs/**', '!engine/hook-rs/target/**', 'engine/code-rs/**', '!engine/code-rs/target/**') }}
+      - name: Norn's Rust parts (norn-hook, norn-code) - ensurePart, built only on a cache miss
+        env:
+          PARTS: hook code
+        shell: bash
+        run: |
+          cargo --version
+          node --input-type=module -e '
+            import { ensurePart, binOf } from "./engine/lib/rustbin.mjs";
+            for (const p of process.env.PARTS.split(" ")) {
+              const t0 = Date.now(), r = ensurePart(p, { err: s => console.error(s), start: () => console.log("building " + p) });
+              if (!r.ok) { console.error(r.why); process.exit(1); }
+              console.log(p + ": " + binOf(p) + (r.built ? " built" : " cached") + " in " + ((Date.now() - t0) / 1000).toFixed(1) + " s");
+            }'
       - name: norn smoke
         shell: bash
         run: node engine/bin/norn.mjs smoke
