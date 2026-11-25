@@ -18,7 +18,7 @@ web
 - **Where they are.** At a desk with a wide screen for long stretches, and often on a phone away from the desk (brief). On the
   phone they check whether work is moving and answer what Norn cannot decide. At the desk they also read run feeds and steer.
 - **What they actually use.** Nearly all their time goes to the Lanes and Runs pages (brief, owner 2026-11-20). They also
-  answer questions in the Inbox and talk to the controller on Home. The other pages are visited rarely or not yet trusted
+  answer questions in the Inbox and talk to the controller on the Controller page. The other pages are visited rarely or not yet trusted
   (brief).
 
 ## Product Purpose
