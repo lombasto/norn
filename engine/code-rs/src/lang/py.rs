@@ -404,7 +404,10 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    #[allow(clippy::too_many_arguments, reason = "a relative import needs its level, module and names apart from the shared site tuple")]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "a relative import needs its level, module and names apart from the shared site tuple"
+    )]
     fn relative(
         &self,
         from: &str,
