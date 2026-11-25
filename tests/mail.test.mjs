@@ -10,6 +10,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { record, loadState, readEvents, recordsFile, fold, RecordError, kindOfId } from '../engine/lib/records.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
+import { binOf } from '../engine/lib/rustbin.mjs';
+import { fwd } from '../engine/lib/config.mjs';
 
 const META = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'bin', 'norn.mjs');
 
@@ -208,7 +210,7 @@ test('the launcher adds the mail hook to executors that run hooks (claude: --set
   const { ADAPTERS } = await import('../engine/lib/harness/index.mjs');
   const s = tmp();
   const hook = mailHookOf({ executor: 'claude', state: s });
-  assert.match(hook.command, /\/engine\/hook-rs\/target\/release\/norn-hook(\.exe)?$/);
+  assert.equal(hook.command, fwd(binOf('hook')), 'the store binary of this engine\'s hook sources (rustbin.mjs)');
   assert.deepEqual([hook.type, hook.args[0], hook.args[1], hook.args[3], hook.args[5], hook.timeout, hook.onFailure], ['command', 'mail', '--state', '--node', '--norn', 30, undefined], 'the exec form: no shell');
   assert.equal(mailHookOf({ executor: 'codex-sol', state: s }), undefined);
   assert.equal(mailHookOf({ executor: 'fake', state: s }), undefined);
