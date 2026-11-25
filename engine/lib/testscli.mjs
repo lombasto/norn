@@ -145,7 +145,7 @@ export function testsCmd(argv, { out = console.log, err = console.error, where, 
   const kind = suiteKind(repo);
   if (verb === 'run') {
     if (kind === 'node:test') return testsRun(f, { repo, state: w.state, project: w.project, rest, out, err, env, print });
-    if (f.changed && !f._.length) return graphChanged(f, { repo, state: w.state, project: w.project, out, err, print });
+    if (f.changed && !f._.length) return graphChanged(f, { repo, state: w.state, project: w.project, err, print });
     err(`error: tests run: runs node:test files (tests/*.test.mjs); this project's suite is ${kind ?? 'neither node:test nor pytest'} - run its test files with their own runner, one at a time (--changed names them with their commands)`); return 2;
   }
   if (verb === 'for') {
@@ -210,7 +210,7 @@ function graphPart(repo, state) {
 }
 // `run --changed` of a project with no node:test suite: the pytest / cargo tests impact.json infers for the change, per group with its
 // runner command; it runs none of them (norn tests run runs node:test files only)
-function graphChanged(f, { repo, state, project, out, err, print }) {
+function graphChanged(f, { repo, state, project, err, print }) {
   const t = testsPolicy(project?.policy), base = f.base || 'origin/main', im = readJson(path.join(state, 'tests', IMPACT_FILE));
   if (!im) { err(`error: tests run --changed: no impact map (${fwd(path.join(state, 'tests', IMPACT_FILE))}): run norn tests index`); return 2; }
   let changed;
