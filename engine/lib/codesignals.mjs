@@ -30,7 +30,6 @@ const DAY = 86400e3, TYPE = /^([a-z]+)(\([^)]*\))?!?:\s/i, GIT_REVERT = /^Revert
 const git = (dir, args) => execFileSync('git', ['-C', dir, '-c', 'core.quotePath=false', ...args], { maxBuffer: 1 << 30, windowsHide: true, timeout: 300000, stdio: ['ignore', 'pipe', 'pipe'] });
 /** a subject's conventional-commit type (git's own `Revert "..."` is a revert) | null */
 export const typeOf = s => { const m = TYPE.exec(s), t = m && m[1].toLowerCase(); return t && SIGNAL_LIMITS.types.includes(t) ? t : GIT_REVERT.test(s) ? 'revert' : null; };
-const iso = t => new Date(t).toISOString();
 
 /** every commit reachable from HEAD -> Map sha -> { sha, p: [parents], t (ms), s: subject, stat: [files under dir] } */
 function commits(dir) {
@@ -86,7 +85,7 @@ export function codeSignals(dir, ix, { now = Date.now() } = {}) {
   const L = SIGNAL_LIMITS, since = now - L.window_days * DAY, short = now - L.fix_short_days * DAY, lands = landingsOf(dir, since, now), K = new Set(ix.files.map(x => x.file));
   const own = lands.flatMap(l => l.intro.filter(c => c.p.length < 2)), typed = own.filter(c => typeOf(c.s)).length, ok = own.length > 0 && typed / own.length >= L.typed_min_share;
   const { n, pair, batches } = coChange(lands, K), fixes = new Map();
-  for (const l of lands) for (const [f, c] of fixesOn(l, K)) { const xs = fixes.get(f) ?? []; fixes.set(f, xs); xs.unshift({ sha: l.sha.slice(0, 12), day: iso(l.t).slice(0, 10), t: l.t, subject: c.s, type: c.type }); }
+  for (const l of lands) for (const [f, c] of fixesOn(l, K)) { const xs = fixes.get(f) ?? []; fixes.set(f, xs); xs.unshift({ sha: l.sha.slice(0, 12), day: new Date(l.t).toISOString().slice(0, 10), t: l.t, subject: c.s, type: c.type }); }
   const N = ix.files.length, fx = x => fixes.get(x.file) ?? [];
   const pf = borda(ix.files.map(x => x.fan_in ?? 0)), pc = borda(ix.files.map(x => x.churn_90d)), px = borda(ix.files.map(x => fx(x).length));
   const files = Object.fromEntries(ix.files.map((x, i) => [x.file, { landings: n.get(x.file) ?? 0, partners: partnersOf(pair, n, x.file),
@@ -94,7 +93,7 @@ export function codeSignals(dir, ix, { now = Date.now() } = {}) {
     fix_first: ok ? (N > 1 ? Math.round(100 * (pf[i] + pc[i] + px[i]) / (3 * (N - 1))) : 100) : null, importance: x.importance, churn_90d: x.churn_90d, fan_in: x.fan_in }]));
   const fix = ok ? { status: 'measured', typed, commits: own.length }
     : { status: 'n/a', typed, commits: own.length, reason: own.length ? `${typed} of ${own.length} commits in ${L.window_days} days carry a conventional-commit type (under ${100 * L.typed_min_share} %)` : `no commit in ${L.window_days} days` };
-  return { at: iso(now), sha: ix.sha, basis: 'measured', window: { days: L.window_days, from: iso(since).slice(0, 10), to: iso(now).slice(0, 10) }, limits: L, landings: lands.length, batches_skipped: batches, fixes: fix, files };
+  return { at: new Date(now).toISOString(), sha: ix.sha, basis: 'measured', window: { days: L.window_days, from: new Date(since).toISOString().slice(0, 10), to: new Date(now).toISOString().slice(0, 10) }, limits: L, landings: lands.length, batches_skipped: batches, fixes: fix, files };
 }
 
 const fileOf = state => path.join(state, 'code', SIGNALS_FILE);
