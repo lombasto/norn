@@ -8,7 +8,6 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { norm } from './scan.mjs';
-import { lint } from './kinds.mjs';
 import { classExecutor } from '../critique.mjs';
 import { resolveShim } from '../paths.mjs';
 import { harnessOf, adapterFor } from '../harness/index.mjs';
@@ -115,14 +114,15 @@ export function quoteCheck(found, { asked, hunks }) {
 export const SECRETS_RULE = 'LS';
 /**
  * the lines LS reported on this check's head -> [{ file, line }]; null when LS is off for the project (ctx.secrets null: the voice reads
- * as before). LS's scan is memoised per check (kinds.mjs lintSide), so this reads the run the check already made - check.mjs runs every
+ * as before). ctx.secretScan is check.mjs's lint (passed in: kinds.mjs reaches this module through tools.mjs, an import would be a
+ * cycle); its scan is memoised per check (kinds.mjs lintSide), so this reads the run the check already made - check.mjs runs every
  * other kind before the model rules - and runs it only when the check left LS out (only). Could not run, or no scan of the head: throws.
  */
 export function secretLines(ctx) {
   const ls = ctx.secrets;
   if (!ls) return null;
   let head;
-  try { head = lint(ls, ctx).head; } catch (e) { throw new Error(`the secrets rule ${ls.id} could not run (${String(e.message).split('\n')[0]}): no voice prompt is built`); }
+  try { head = ctx.secretScan(ls).head; } catch (e) { throw new Error(`the secrets rule ${ls.id} could not run (${String(e.message).split('\n')[0]}): no voice prompt is built`); }
   if (!head) throw new Error(`the secrets rule ${ls.id} could not run (no scan of the head): no voice prompt is built`);
   return head.filter(f => f.line > 0).map(f => ({ file: f.file, line: f.line }));
 }
