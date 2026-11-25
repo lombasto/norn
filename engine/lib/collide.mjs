@@ -8,6 +8,7 @@
 // (a caveat that names a dead run as running; dead = the proof of death of SPEC 4A.1, of a run and of a lane). First come: a hold only
 // from an intent ahead. S1c: the land-first wait (a hold that ends by itself), the caveat suffix. S2a: the remedy menu and who may apply
 // it (APPLY_BY, policy.collide.apply_by), the judge reads a recorded wait and part, narrowScope for norn collide narrow.
+// S2b: fold - foldRefusal, the FOLDED-<lane>.md text (foldedText; foldedSources reads its exact bytes back) and the kept lane's prompt line.
 import { globsIntersect, inScope } from './ready.mjs';
 import { follow, successorOf } from './after.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
