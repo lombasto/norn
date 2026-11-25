@@ -33,7 +33,7 @@ export const CODE_USAGE = 'usage: norn code history [--project P | --state D] [-
   + 'usage: norn code suspects "<symptom words>" | --trace <file> [--since <sha | Nd>] [--top N] [--project P | --state D] [--repo DIR] [--json]   (the recent '
   + 'landings to read first against a bug: trace files, their partners, then symptom words; a batch merge judged per member branch; docs/code-signals.md)\n'
   + 'usage: norn code risk <base>..<head> [--project P | --state D] [--repo DIR] [--json]   (where the diff stands against the last 100 landings before '
-  + 'its merge base: a percentile, with the numbers that put it there; docs/code-signals.md)';
+  + 'its merge base: a percentile, with the numbers that put it there; engine/lib/slop/rules/README.md)';
 export const CODE_FILE = 'index.json', CODE_CAP = 40, CODE_SORTS = ['importance', 'fix_first', 'lines', 'growth', 'churn', 'fan_in', 'file'];
 const FLAGS = { history: [], map: ['refresh!'], signals: ['top'], links: [], why: [], suspects: ['trace', 'since', 'top'], risk: [] }, START_GAP_MS = 10 * 60e3;
 const indexOf = state => path.join(state, 'code', CODE_FILE);

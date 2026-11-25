@@ -63,14 +63,14 @@ export function endCheck({ repo, state, projectDir = null, voice = null, brief =
   const bb = branchBase(repo), head = bb && gitRun(repo, ['rev-parse', 'HEAD']).trim();
   if (!bb || bb.base === head) return null;
   const rules = projectSlop({ projectDir }).rules, hash = rulesHash(rules), had = slopChecks(state).findLast(c => c.branch === bb.branch && c.head === head && c.hash === hash);
-  if (had) return { branch: bb.branch, check: had, open: unwaived(state, had.findings.filter(f => f.new && f.level === 'BLOCK' && !f.shadow)), result: null, risk: had.risk ?? null, gate: null };
   let rk;
   try { rk = codeRisk({ dir: repo, state, base: bb.base, head }); } catch (e) { const w = String(e.stderr || e.message).trim().split('\n')[0]; rk = { pct: null, na: w, line: `risk rank n/a: ${w}` }; }
   const risk = rk.line;
+  if (had) return { branch: bb.branch, check: had, open: unwaived(state, had.findings.filter(f => f.new && f.level === 'BLOCK' && !f.shadow)), result: null, risk, gate: null };
   const used = voice ? voiceReadsToday(state, now) : 0, gate = voice ? voiceGate({ risk: rk, cap: voice.cap, used, checks: slopChecks(state), now }) : null;
   const t = makeTool({ voice, used }), tool = gate && !gate.read ? Object.assign((rule, ...a) => { if (rule.kind === 'model') throw new Error(gate.why); return t(rule, ...a); }, { reads: 0 }) : t;   // the voice's daily cap: today's reads so far
   const c = checkBranch({ repo, state, base: bb.base, rules, projectDir, tool, brief });
-  return { branch: c.branch, ...hostWrite(state, { type: 'check', branch: c.branch, lane, run, base: c.base, head: c.result.head, hash: c.result.hash, blocks: c.result.blocks, findings: c.result.findings, voice_reads: tool.reads, risk }), result: c.result, risk, gate };
+  return { branch: c.branch, ...hostWrite(state, { type: 'check', branch: c.branch, lane, run, base: c.base, head: c.result.head, hash: c.result.hash, blocks: c.result.blocks, findings: c.result.findings, voice_reads: tool.reads }), result: c.result, risk, gate };
 }
 
 /** SPEC 1.3 F7: the hold of a run-end check that threw - one BLOCK "could not check" on the branch, stored under a hash no rule set has

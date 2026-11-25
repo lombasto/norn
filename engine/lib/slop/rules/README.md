@@ -146,8 +146,15 @@ days (`VOICE_GATE.history_days`) times the share of the UTC day still left, roun
 `engine/lib/coderisk.mjs`: where it stands against the last 100 landings) is at least the bar `100 x (1 - left / expected)`; under
 it each model rule is the WARN "could not run: skipped by the risk rank: riskier than p % of the last n landings (...), under the bar
 b % (l reads left, ~e diffs expected today)", and no read is spent. A rank that is n/a (no code signals stored, fewer than 10
-landings) reads in arrival order with the reason said: the cap alone decides, as before. The check line carries the one-line rank
-(`risk`), the run-end log line and the PR body (merge-land) print it.
+landings) reads in arrival order with the reason said: the cap alone decides, as before. `endCheck` returns the one-line rank
+(`risk`) to the run end, a skipped diff's WARN quotes it, and the PR body (merge-land) prints it as "Risk rank: ...".
+
+The rank (`norn code risk <base>..<head> [--json]`): the diff from the merge base to head, and the same numbers for each of the last
+100 first-parent landings ending at that merge base - lines and files changed (git), the fixes 365 d of its files summed, their top
+`fix_first`, and the companions it leaves out (the code signals through `readSignals`, docs/code-signals.md; an untyped history drops
+the two fix numbers and says why). Per number the Borda count over the landings and the diff (ties half), summed; the percentile =
+the landings with a lower sum plus half the equal ones. The line names the three numbers standing highest. `RISK_LIMITS`
+(engine/lib/coderisk.mjs, the one place): `landings` 100 (the pool), `min_landings` 10 (under it the rank is n/a), `why` 3.
 
 The `M*` rules ship `shadow: true`. A thumb on a model finding in the Guard records a rating (`<state>/slop/ratings.jsonl`, the
 last one counts); Slop › Rules shows each rule's precision. At 90 % over 20 rated a rule may go to `BLOCK`, under 50 % (over 20

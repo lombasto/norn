@@ -496,7 +496,7 @@ function slopEnd() {
     }
     if (!c) return null;   // no lane branch (on main, detached, no main to diff against), or no commits past main
     const unrun = c.check.findings.filter(f => f.unrun).map(f => f.rule);
-    logLine(`slop: ${c.open.length} open BLOCK finding(s) on ${c.branch} (${c.result ? c.result.ran.join(' ') : `the check stored at ${c.check.head.slice(0, 7)} by ${c.check.run ?? '-'}`}${unrun.length ? '; could not run ' + unrun.join(' ') : ''})${c.risk ? `; ${c.risk}` : ''}`);
+    logLine(`slop: ${c.open.length} open BLOCK finding(s) on ${c.branch} (${c.result ? c.result.ran.join(' ') : `the check stored at ${c.check.head.slice(0, 7)} by ${c.check.run ?? '-'}`}${unrun.length ? '; could not run ' + unrun.join(' ') : ''})`);
     return c;
   };
   const c = check();

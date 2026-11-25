@@ -4,7 +4,7 @@
 //   series.json  { days: { YYYY-MM-DD: { loc, sweep } } } - the daily points (trends); a day no daily ran is filled from git ({ loc, filled: true })
 //   landings.jsonl one point per landing on main { sha, day, branch, item, subject, code_net, tests_net, over_cap } (S4: which merge moved it)
 //   checks.jsonl one line per check { branch, base, head, hash (the rule set), findings (the new ones, every level), voice_reads? (the
-//                second voice's calls: the daily cap counts them), risk? (a run-end check's one-line risk rank, coderisk.mjs) } - the door reads it
+//                second voice's calls: the daily cap counts them) } - the door reads it
 //   REPORT.md + report.json - the daily report, its one digest line and the main it read to; daily.started / daily.missed - a daily start, the ones that wrote nothing
 //   ratings.jsonl one line per thumb on a model finding { fp, rule, up, by, at } (RM-43: the second voice's precision; the last one counts)
 //   outcomes.jsonl one line per finding the run end acted on { at, branch, lane, run, head, fix, rule, fp, file, line, action } (S1c: autofix | reverted | resume)
@@ -108,7 +108,7 @@ export function hostWrite(state, payload) {
     if (!payload.hash) throw new Error('hostWrite check: no rule-set hash (a stored check is keyed on branch, head and rule set)');
     const holds = slopHolds(state), { branch } = payload, at = payload.at || new Date().toISOString();
     const check = { branch: branch ?? null, base: payload.base, head: payload.head, hash: payload.hash, lane: payload.lane ?? null, run: payload.run ?? null, at,
-      findings: payload.findings.filter(f => f.new !== false), ...(payload.voice_reads ? { voice_reads: payload.voice_reads } : {}), ...(payload.risk ? { risk: payload.risk } : {}) };
+      findings: payload.findings.filter(f => f.new !== false), ...(payload.voice_reads ? { voice_reads: payload.voice_reads } : {}) };
     fs.mkdirSync(slopDir(state), { recursive: true });
     fs.appendFileSync(checksFile(state), JSON.stringify(check) + '\n');
     if (!branch) return { open: unwaived(state, payload.blocks), check };

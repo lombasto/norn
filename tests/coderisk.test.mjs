@@ -1,4 +1,4 @@
-// RM-a-68 (docs/code-signals.md "A consumer: the risk rank"): lib/coderisk.mjs over a synthetic repo - a diff's numbers (files, lines,
+// RM-a-68 (engine/lib/slop/rules/README.md "The second voice"): lib/coderisk.mjs over a synthetic repo - a diff's numbers (files, lines,
 // the fix history and fix-first rank of its files, the companions it leaves out), its percentile against the landings before its merge
 // base with the numbers that put it there, n/a with the reason (no signals, too few landings), an untyped history ranking without the fix
 // numbers - and `norn code risk <base>..<head>`. Sandbox only (mkTmp).

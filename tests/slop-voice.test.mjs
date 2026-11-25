@@ -213,7 +213,7 @@ test('the gate: enough reads left -> read; fewer than the diffs expected -> only
   assert.equal(voiceGate({ risk: lo, cap: 1, used: 0, checks: [], now: NOON }).expected, 1, 'no history: this diff is the one expected');
 });
 
-test('the run end: a low-rank diff on a short day is skipped with the gate\'s words and no call; a high-rank one is read; the check carries the rank line', () => {
+test('the run end: a low-rank diff on a short day is skipped with the gate\'s words and no call; a high-rank one is read; the run end says the rank line', () => {
   const repo = repoOf({ 'src/a.mjs': 'export const a = 1;\n' }, { 'x.txt': 'x\n' }), state = mkTmp('slop-voice-gate-'), ans = path.join(mkTmp('slop-voice-ans-'), 'answer.md');
   fs.writeFileSync(ans, answer([]));
   git(repo, 'checkout', '-q', 'main');
@@ -233,13 +233,14 @@ test('the run end: a low-rank diff on a short day is skipped with the gate\'s wo
     assert.equal(unrun[0].msg, `could not run: ${low.gate.why}`);
     assert.match(low.gate.why, /^skipped by the risk rank: riskier than \d+ % of the last 13 landings \(.*\), under the bar 60 % \(2 reads left, ~5 diffs expected today\)$/);
     assert.equal(low.check.voice_reads, undefined, 'skipped: no read spent');
-    assert.match(low.check.risk, /^riskier than \d+ % of the last 13 landings/);
+    assert.match(low.risk, /^riskier than \d+ % of the last 13 landings/);
     branch('feat/high', Array.from({ length: 60 }, (_, i) => `export const a${i} = ${i};\n`).join(''));
     const high = endCheck({ repo, state, voice: route, now: NOON });
     assert.equal(high.gate.read, true, high.gate.why);
     assert.ok(!high.result.findings.some(f => f.unrun && isModel(f)), 'read');
     assert.equal(high.check.voice_reads, 1);
-    assert.equal(high.risk, high.check.risk);
+    assert.match(high.risk, /^riskier than \d+ % of the last 13 landings/);
+    assert.equal(endCheck({ repo, state, voice: route, now: NOON }).risk, high.risk, 'the stored check reused: the rank line still said');
   } finally { if (was === undefined) delete process.env.FAKE_RESULT; else process.env.FAKE_RESULT = was; }
 });
 

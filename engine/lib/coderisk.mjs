@@ -7,7 +7,7 @@
 import { execFileSync } from 'node:child_process';
 import { readSignals } from './codesignals.mjs';
 
-// the one place of this module's thresholds (docs/code-signals.md "A consumer: the risk rank")
+// the one place of this module's thresholds (listed in engine/lib/slop/rules/README.md "The second voice")
 export const RISK_LIMITS = Object.freeze({ landings: 100, min_landings: 10, why: 3 });
 // the numbers, in this order (ties of the "why" list keep it); fix: needs a typed history (signals fixes.status 'measured')
 export const RISK_NUMBERS = Object.freeze([
