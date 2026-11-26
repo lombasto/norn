@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
 import { ledgerConfig } from '../engine/lib/ledger.mjs';
 import { writeStatus } from '../engine/lib/status.mjs';
@@ -143,12 +143,20 @@ test('norn help --all lists every command (the --all ones one line each); norn h
 
 test("F-5: norn <cmd> --help prints that command's usage, exit 0; norn help <cmd> the same; an unknown command points at norn help", () => {
   const sb = sandbox();
+  // norn help <cmd> for every command in ONE spawn (main's help path, each out line as the CLI writes it); the per-command
+  // --help spawn below keeps each command's real exit path
+  const js = `import { main } from ${JSON.stringify(pathToFileURL(META).href)};
+const all = {}; for (const c of JSON.parse(process.argv[1])) { let o = '', e = ''; const code = main(['help', c], process.env, s => { o += s + '\\n'; }, s => { e += s + '\\n'; }); all[c] = { code, out: o, err: e }; }
+process.stdout.write(JSON.stringify(all));`;
+  const hr = spawnSync(process.execPath, ['--input-type=module', '-e', js, JSON.stringify(COMMANDS)], { env: sb.env, encoding: 'utf8', timeout: 60000 });
+  assert.equal(hr.status, 0, hr.stderr);
+  const helps = JSON.parse(hr.stdout);
   for (const c of COMMANDS) {
     const r = sb.run(c, '--help');
     assert.equal(r.code, 0, `${c}: ${r.err}`);
     assert.match(r.out, new RegExp(`^usage: norn ${c}(\\s|$)`), c);
     assert.doesNotMatch(r.out, /(^|[\s|(`'"])meta (?!controller)[a-z]/, `${c}: the usage says norn`);
-    assert.equal(sb.run('help', c).out, r.out, `norn help ${c}`);
+    assert.deepEqual(helps[c], { code: 0, out: r.out, err: '' }, `norn help ${c}`);
   }
   const u = sb.run('frobnicate');
   assert.equal(u.code, 2); assert.match(u.err, /unknown command frobnicate/); assert.match(u.err, /see norn help/);
