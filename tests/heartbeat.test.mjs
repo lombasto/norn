@@ -99,7 +99,7 @@ test('second signal: a stale .hb with a live supervisor and an advancing log or 
   assert.match(text(a), /^running .* - heartbeat late \(300 s, output \d+ s ago\)$/); assert.deepEqual(stateOf(text(a)), ['warn', 'heartbeat late']);
   assert.equal(text(b), 'lost'); assert.deepEqual(stateOf(text(b)), ['lost', 'lost']);
   assert.deepEqual(liveRuns(d.state).map(r => r.id).sort(), [a, e].sort(), 'a late run still counts as live (caps, the lane writer gate)');
-  assert.deepEqual(sweepLost(d.state).sort(), [b, c].sort());
+  assert.deepEqual(sweepLost(d.state, { load: () => 0 }).sort(), [b, c].sort(), "the fixture's CPU is idle: never the machine's (a busy runner makes b late)");
   assert.equal(d.item(a).state, 'running'); assert.equal(d.item(e).state, 'running');
   assert.equal(d.item(b).lost.cause, 'stale'); assert.equal(d.item(c).lost.cause, 'gone');
 });
