@@ -110,13 +110,15 @@ test('pr.yml: pull_request only; slop of the diff, norn smoke and ci-suite --cha
 });
 
 // NORN-CI-SLOP-BUILD: the slop check reads the code graph (K10), so norn-code must exist in the clone's store before it runs, built by
-// Norn's own part build (rustbin ensurePart), never skipped; smoke shares the step pattern for both parts. The cache is keyed by the
+// Norn's own part build (rustbin ensurePart), never skipped; smoke shares the step pattern for both parts, and so does tests
+// (NORN-CI-TESTS-PARTS: its pick can hold the graph tests, slop-lang / slop-kinds, red without norn-code). The cache is keyed by the
 // parts' sources (target/ left out), so a PR that does not touch Rust builds nothing.
-test('pr.yml: slop and smoke build their Rust parts through ensurePart before their check, cached by the parts\' sources', () => {
+test('pr.yml: slop, smoke and tests build their Rust parts through ensurePart before their check, cached by the parts\' sources', () => {
   const lines = WF('pr.yml').split(/\r?\n/).filter(l => l.trim() && !l.trim().startsWith('#')).map(l => l.trim());
   const job = n => { const i = lines.indexOf(`${n}:`), j = lines.findIndex((l, k) => k > i && /^(slop|smoke|tests):$/.test(l)); return lines.slice(i + 1, j < 0 ? undefined : j); };
   const key = parts => `key: rust-${parts.join('-')}-\${{ runner.os }}-\${{ runner.arch }}-\${{ hashFiles(${parts.map(p => `'engine/${p}-rs/**', '!engine/${p}-rs/target/**'`).join(', ')}) }}`;
-  for (const [n, parts, check] of [['slop', ['code'], "- name: slop check of the PR's diff from its merge base"], ['smoke', ['hook', 'code'], '- name: norn smoke']]) {
+  for (const [n, parts, check] of [['slop', ['code'], "- name: slop check of the PR's diff from its merge base"], ['smoke', ['hook', 'code'], '- name: norn smoke'],
+    ['tests', ['hook', 'code'], '- name: the tests of the changed files (fails only on a red not in tests/KNOWN-REDS.txt)']]) {
     const s = job(n), c = s.indexOf('path: .git/norn/rust/bin'), b = s.findIndex(l => l.startsWith("- name: Norn's Rust parts")), at = s.indexOf(check);
     assert.ok(c > 0 && s[c - 2] === '- uses: actions/cache@v4' && s[c + 1] === key(parts), `${n}: the store's bin/ cached by the parts' sources`);
     assert.ok(b > c && b < at, `${n}: the build step runs after the cache restore, before the check`);
@@ -125,7 +127,6 @@ test('pr.yml: slop and smoke build their Rust parts through ensurePart before th
     assert.ok(body.some(l => l === 'import { ensurePart, binOf } from "./engine/lib/rustbin.mjs";') && body.some(l => /ensurePart\(p, /.test(l)), `${n}: Norn's part build`);
     assert.ok(body.some(l => l.includes('process.exit(1)')), `${n}: a part that cannot be had fails the step`);
   }
-  assert.ok(!job('tests').some(l => /norn\/rust|ensurePart/.test(l)), 'the tests job needs no part');
 });
 
 // A workflow-level env (indent 0) or job-level env (indent 4) offers only github, needs, strategy, matrix, vars, secrets and inputs:
