@@ -2,6 +2,7 @@
 // the built-in WebSocket): open(size) -> { go(url) (waits for body data-ready), ev(expr), until(expr), close() } - a timeout throws with the page's state. browser null = skip.
 import path from 'node:path';
 import { mkTmp } from './tmp.mjs';
+import { timed } from './race.mjs';
 
 let shotLib = null;
 try { shotLib = await import('../../engine/lib/shot.mjs'); } catch { /* norn shot not on this branch */ }
@@ -44,8 +45,8 @@ export async function openPage(size = [1440, 900], { browser = installed } = {})
   const ev = async expr => (await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }))?.result?.value;
   await send('Page.enable'); await send('Runtime.enable'); await send('Network.enable'); await send('Log.enable');
   const pageState = async () => {
-    const st = await Promise.race([ev(`JSON.stringify({ href: location.href, readyState: document.readyState, dataset: { ...document.body?.dataset }, error: document.querySelector('#error')?.textContent || null })`),
-      new Promise(r => setTimeout(() => r('(the page did not answer Runtime.evaluate in 5 s: its main thread is blocked)'), 5000))]);
+    const st = await timed(ev(`JSON.stringify({ href: location.href, readyState: document.readyState, dataset: { ...document.body?.dataset }, error: document.querySelector('#error')?.textContent || null })`),
+      5000, '(the page did not answer Runtime.evaluate in 5 s: its main thread is blocked)');
     const now = Date.now(), pending = [...story.net.values()].map(r => `${r.url.replace(/^https?:\/\/[^/]+/, '')} (${now - r.t0} ms)`);
     return `page: ${st}
 pending: ${pending.join(', ') || 'none'}
@@ -60,7 +61,7 @@ ${await pageState()}`); await new Promise(r => setTimeout(r, 100)); } };
     async go(url, ms = 15000) {
       const t0 = Date.now(), loaded = new Promise(r => on.set('Page.loadEventFired', () => r(true)));
       story.net.clear(); story.errors.length = 0; await send('Page.navigate', { url });
-      if (!await Promise.race([loaded, new Promise(r => setTimeout(() => r(false), ms))])) throw new Error(`go(${url}): no load event in ${ms} ms
+      if (!await timed(loaded, ms, false)) throw new Error(`go(${url}): no load event in ${ms} ms
 ${await pageState()}`);
       try { return await until('document.body.dataset.ready', Math.max(0, ms - (Date.now() - t0))); }
       catch (e) { throw new Error(`go(${url}): body.dataset.ready not set in ${ms} ms
