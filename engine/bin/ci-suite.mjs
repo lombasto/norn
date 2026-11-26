@@ -14,7 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { parseKnown, judge, suiteEnv, pickTests, isBrowserTest, timeRow, CENSUS_PRELOAD, censusEnv, censusCount } from '../lib/cisuite.mjs';
+import { parseKnown, judge, suiteEnv, pickTests, isBrowserTest, timeRow, censusPreload, censusEnv, censusCount } from '../lib/cisuite.mjs';
 import { procsNaming, leakText } from '../lib/testprocs.mjs';
 import { killTree } from '../lib/runs.mjs';
 import { listProcs } from '../lib/strays.mjs';
@@ -22,7 +22,7 @@ import { acquireGate, GATE_WAIT_MIN } from '../lib/gatelock.mjs';
 import { holdJob } from '../lib/jobguard.mjs';
 
 const LIB = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'lib');
-const REPORTER = pathToFileURL(path.join(LIB, 'ci-reporter.mjs')).href;
+const REPORTER = pathToFileURL(path.join(LIB, 'ci-reporter.mjs')).href, TIMES = pathToFileURL(path.join(LIB, 'cisuite.mjs')).href;
 const fwd = s => s.split('\\').join('/');
 const argv = process.argv.slice(2), globs = [];
 // CI-HANG-B7F6833: the per-file wall cap - a file that has not exited by then is a hang: its process tree is killed, its output so
@@ -80,8 +80,6 @@ if (!gate.held) console.log(`ci-suite: no machine gate lock taken (${gate.why})`
 // a project gate its files start runs under this suite's gate lock (META_GATE_HELD)
 const childEnv = { ...suiteEnv(process.env), ...gate.env };
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-suite-'));
-const preload = census ? path.join(tmp, 'census-preload.cjs') : null;
-if (preload) fs.writeFileSync(preload, CENSUS_PRELOAD);
 // fair-slots 5b / 6b: nothing a test file starts outlives the suite. Windows: the suite holds itself in a Job Object (jobguard.mjs,
 // KILL_ON_JOB_CLOSE) before the first file, so every process born below it - detached supervisors, headless Edge, orphans whose parent
 // already exited - dies when the suite ends however it ends (exit, crash, a hard kill of this process: its hold sees the exit). Any
@@ -95,15 +93,16 @@ if (process.platform === 'win32') { const j = await holdJob(process.pid, { name:
 // names that dir. When the file is done, a process whose command line still names it is that file's leak: the file fails, naming
 // the pids (never a listed red: KNOWN-REDS cannot hold it), and the suite kills them. 11-13: 22 supervisor + fake-executor pairs.
 const runFile = (name, f, i) => new Promise(resolve => {
-  const ft = path.join(tmp, `${name}-${i}`), out = path.join(tmp, `${name}-${i}.jsonl`);
+  const ft = path.join(tmp, `${name}-${i}`), out = path.join(tmp, `${name}-${i}.jsonl`), times = path.join(tmp, `${name}-${i}.times.jsonl`);
   fs.mkdirSync(ft);
   // the census dir sits beside the file's temp dir, never in it: a test that lists or cleans its TEMP sees nothing of the census
   const cd = path.join(tmp, `${name}-${i}.census`);
-  if (census) fs.mkdirSync(path.join(cd, 'trace2'), { recursive: true });
+  const preload = path.join(cd, 'census-preload.cjs');
+  if (census) { fs.mkdirSync(path.join(cd, 'trace2'), { recursive: true }); fs.writeFileSync(preload, censusPreload(cd)); }
   const t0 = Date.now();
   console.log(`ci-suite: start ${f}`);
   const child = spawn(process.execPath, ['--test', '--test-reporter=spec', '--test-reporter-destination=stdout',
-    `--test-reporter=${REPORTER}`, `--test-reporter-destination=${out}`, f], { env: { ...childEnv, TEMP: ft, TMP: ft, TMPDIR: ft, ...(census ? censusEnv(childEnv.NODE_OPTIONS, fwd(preload), cd) : {}) } });
+    `--test-reporter=${REPORTER}`, `--test-reporter-destination=${out}`, `--test-reporter=${TIMES}`, `--test-reporter-destination=${times}`, f], { env: { ...childEnv, TEMP: ft, TMP: ft, TMPDIR: ft, ...(census ? censusEnv(childEnv.NODE_OPTIONS, fwd(preload), cd) : {}) } });
   const buf = [];
   child.stdout.on('data', d => buf.push(d)); child.stderr.on('data', d => buf.push(d));
   let hung = false, ended = false;
@@ -117,9 +116,9 @@ const runFile = (name, f, i) => new Promise(resolve => {
     process.stdout.write(Buffer.concat(buf));
     console.log(`ci-suite: done ${f}`);
     const hang = hung ? { file: f, name: `no exit within the ${capS} s per-file cap (killed)` } : null;
-    const lines = fs.existsSync(out) ? fs.readFileSync(out, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : null;
-    const row = { ...timeRow(f, wall, lines ?? []), phase: name, ...(census ? censusCount(cd) : {}) };
-    const fails = lines ? lines.filter(x => x.top == null)
+    const jsonl = p => fs.existsSync(p) ? fs.readFileSync(p, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : null;
+    const row = { ...timeRow(f, wall, jsonl(times) ?? []), phase: name, ...(census ? censusCount(cd) : {}) };
+    const fails = fs.existsSync(out) ? jsonl(out)
       .map(x => ({ file: x.file ? fwd(path.relative(process.cwd(), x.file)) : f, name: x.name })) : hung ? [] : null;
     const procs = listProcs(), left = procsNaming([ft], procs);
     for (const p of left) killTree(p.pid, { killer: `ci-suite pid ${process.pid}`, reason: `${f}: left alive after the file (its command line names ${fwd(ft)})` });

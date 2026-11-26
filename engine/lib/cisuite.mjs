@@ -113,23 +113,29 @@ export function pickTests(changed, tests, read, max = Infinity) {
   return { run: [...close, ...cut].sort(), left: importers.slice(max).map(x => x.t).sort() };
 }
 
-// RM-26 S0 (lean-suite SPEC 8): the per-file time row of `ci-suite --json`. lines: the file's ci-reporter lines; a `{ top, ms }` line is
-// one finished top-level case. cases_ms = their sum; outside_ms = the rest of the file's wall (process start, imports, hooks, teardown).
+// RM-26 S0 (lean-suite SPEC 8): this module is also ci-suite's second node:test reporter (`--test-reporter=<cisuite.mjs>`, beside
+// ci-reporter.mjs's reds): one `{ top, ms }` line per finished top-level case (nesting 0, pass or fail).
+export default async function* timesReporter(source) {
+  for await (const e of source) if ((e.type === 'test:pass' || e.type === 'test:fail') && e.data.nesting === 0) yield JSON.stringify({ top: e.data.name, ms: e.data.details?.duration_ms ?? 0 }) + '\n';
+}
+// the per-file time row of `ci-suite --json`. lines: the file's timesReporter lines. cases_ms = their sum; outside_ms = the rest of
+// the file's wall (process start, imports, hooks, teardown).
 /** (file, wall ms, reporter lines) -> { file, wall_ms, cases_ms, outside_ms, cases } */
 export function timeRow(file, wallMs, lines) {
   const tops = lines.filter(x => x.top != null), cases = Math.round(tops.reduce((s, x) => s + (Number(x.ms) || 0), 0)), wall = Math.round(wallMs);
   return { file, wall_ms: wall, cases_ms: cases, outside_ms: wall - cases, cases: tops.length };
 }
-// `ci-suite --census`: a `--require` preload (census-preload.cjs, written into the suite's temp dir) appends one line per node process
-// (main thread) to the file NORN_CENSUS_NODE names; git writes one trace2 event file per process into the GIT_TRACE2_EVENT directory
+// `ci-suite --census`: a `--require` preload (census-preload.cjs, written into each file's census dir) appends one line per node process
+// (main thread) to that dir's node.txt, its path written into the preload (no env switch); git writes one trace2 event file per process into the GIT_TRACE2_EVENT directory
 // (git-config(1) trace2.eventTarget: a directory target). A CommonJS --require, not an --import: any --import makes node load the
 // entry through the ESM loader, so `node chk.txt` (slop-fix.test.mjs's Done check) failed with ERR_UNKNOWN_FILE_EXTENSION under the
 // census (CI 45728652472). The env a file's `node --test` gets for it: the caller's NODE_OPTIONS kept, a census preload of an outer
 // suite (a ci-suite test running ci-suite --census) replaced, so each process lands in the innermost census only.
-export const CENSUS_PRELOAD = "const fs = require('node:fs'), { isMainThread } = require('node:worker_threads');\n" +
-  "if (isMainThread && process.env.NORN_CENSUS_NODE) try { fs.appendFileSync(process.env.NORN_CENSUS_NODE, `${process.pid}\\n`); } catch {}\n";
+/** the census dir -> the preload's source (a failed append is a process left uncounted: it must never break the process under test) */
+export const censusPreload = dir => "const fs = require('node:fs'), { isMainThread } = require('node:worker_threads');\n" +
+  `if (isMainThread) try { fs.appendFileSync(${JSON.stringify(path.join(dir, 'node.txt'))}, \`\${process.pid}\\n\`); } catch {}\n`;
 /** (the caller's NODE_OPTIONS value, the preload's path, the file's census dir) -> the env entries a census run sets */
-export const censusEnv = (nodeOptions, preload, dir) => ({ GIT_TRACE2_EVENT: path.join(dir, 'trace2'), NORN_CENSUS_NODE: path.join(dir, 'node.txt'),
+export const censusEnv = (nodeOptions, preload, dir) => ({ GIT_TRACE2_EVENT: path.join(dir, 'trace2'),
   NODE_OPTIONS: [String(nodeOptions ?? '').replace(/\s*--require="[^"]*census-preload\.cjs"/g, '').trim(), `--require="${preload}"`].filter(Boolean).join(' ') });
 /** the census dir -> { git_procs, node_procs } */
 export const censusCount = dir => {
