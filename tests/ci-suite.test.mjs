@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { parseKnown, judge, suiteEnv, pickTests, importsOf, timeRow } from '../engine/lib/cisuite.mjs';
+import { parseKnown, judge, suiteEnv, pickTests, importsOf, timeRow, censusEnv } from '../engine/lib/cisuite.mjs';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
 import { skipWhy } from './helpers/cdp.mjs';
 
@@ -181,13 +181,28 @@ test('ci-suite --json F: one row per file (wall_ms, cases_ms, outside_ms, cases,
   }
 });
 
-test('ci-suite --census: git_procs (GIT_TRACE2_EVENT, a file per git process) and node_procs (a --import preload) per file', () => {
-  const out = path.join(mkTmp('meta-ci-census-'), 'times.json');
-  const r = spawnSync(process.execPath, [CI, '--json', out, '--census', 'tests/fixtures/ci-suite-census/*.test.mjs'], { cwd: REPO, encoding: 'utf8', env: suiteEnv(process.env) });
+test('censusEnv: the caller\'s NODE_OPTIONS kept, an outer census preload replaced by this one (a process counts in the innermost census)', () => {
+  const e = censusEnv({ NODE_OPTIONS: '--max-old-space-size=4096 --require="C:/t/a/census-preload.cjs"' }, 'C:/t/b/census-preload.cjs', 'C:/t/b/f.census');
+  assert.equal(e.NODE_OPTIONS, '--max-old-space-size=4096 --require="C:/t/b/census-preload.cjs"');
+  assert.equal(censusEnv({}, '/t/p.cjs', '/t/d').NODE_OPTIONS, '--require="/t/p.cjs"');
+  assert.equal(e.GIT_TRACE2_EVENT, path.join('C:/t/b/f.census', 'trace2'));
+});
+
+test('ci-suite --census: git_procs (GIT_TRACE2_EVENT, a file per git process) and node_procs (a --require preload) per file', () => {
+  // plain starts no process; spawns starts 2 git and 1 node more, the node one on a .txt entry as slop-fix.test.mjs's Done check does
+  // (CI 45728652472: an --import preload sent it through the ESM loader, ERR_UNKNOWN_FILE_EXTENSION)
+  const d = mkTmp('meta-ci-census-'), out = path.join(d, 'times.json'), fx = path.join(d, 'fx');
+  fs.mkdirSync(fx);
+  fs.writeFileSync(path.join(fx, 'chk.txt'), 'process.exit(0)\n');
+  fs.writeFileSync(path.join(fx, 'plain.test.mjs'), "import test from 'node:test';\ntest('census plain', () => {});\n");
+  fs.writeFileSync(path.join(fx, 'spawns.test.mjs'), "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { spawnSync } from 'node:child_process';\n" +
+    "test('census spawns: git twice', () => { for (let i = 0; i < 2; i++) assert.equal(spawnSync('git', ['--version']).status, 0); });\n" +
+    `test('census spawns: node once, on a .txt entry', () => { const r = spawnSync(process.execPath, [${JSON.stringify(path.join(fx, 'chk.txt'))}], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); });\n`);
+  const r = spawnSync(process.execPath, [CI, '--json', out, '--census', `${fx.split('\\').join('/')}/*.test.mjs`], { cwd: REPO, encoding: 'utf8', env: suiteEnv(process.env) });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const j = JSON.parse(fs.readFileSync(out, 'utf8')), [plain, spawns] = j.files;
   assert.equal(j.census, true);
-  assert.deepEqual([plain.file, spawns.file], ['tests/fixtures/ci-suite-census/plain.test.mjs', 'tests/fixtures/ci-suite-census/spawns.test.mjs']);
+  assert.deepEqual([plain.file, spawns.file].map(f => path.basename(f)), ['plain.test.mjs', 'spawns.test.mjs']);
   assert.equal(plain.git_procs, 0, JSON.stringify(plain));
   assert.ok(plain.node_procs >= 1, 'the file\'s own node --test process is counted');
   assert.equal(spawns.git_procs - plain.git_procs, 2, JSON.stringify(j.files));

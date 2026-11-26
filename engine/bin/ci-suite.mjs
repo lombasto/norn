@@ -80,7 +80,7 @@ if (!gate.held) console.log(`ci-suite: no machine gate lock taken (${gate.why})`
 // a project gate its files start runs under this suite's gate lock (META_GATE_HELD)
 const childEnv = { ...suiteEnv(process.env), ...gate.env };
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-suite-'));
-const preload = census ? path.join(tmp, 'census-preload.mjs') : null;
+const preload = census ? path.join(tmp, 'census-preload.cjs') : null;
 if (preload) fs.writeFileSync(preload, CENSUS_PRELOAD);
 // fair-slots 5b / 6b: nothing a test file starts outlives the suite. Windows: the suite holds itself in a Job Object (jobguard.mjs,
 // KILL_ON_JOB_CLOSE) before the first file, so every process born below it - detached supervisors, headless Edge, orphans whose parent
@@ -103,7 +103,7 @@ const runFile = (name, f, i) => new Promise(resolve => {
   const t0 = Date.now();
   console.log(`ci-suite: start ${f}`);
   const child = spawn(process.execPath, ['--test', '--test-reporter=spec', '--test-reporter-destination=stdout',
-    `--test-reporter=${REPORTER}`, `--test-reporter-destination=${out}`, f], { env: { ...childEnv, TEMP: ft, TMP: ft, TMPDIR: ft, ...(census ? censusEnv(childEnv, pathToFileURL(preload).href, cd) : {}) } });
+    `--test-reporter=${REPORTER}`, `--test-reporter-destination=${out}`, f], { env: { ...childEnv, TEMP: ft, TMP: ft, TMPDIR: ft, ...(census ? censusEnv(childEnv, fwd(preload), cd) : {}) } });
   const buf = [];
   child.stdout.on('data', d => buf.push(d)); child.stderr.on('data', d => buf.push(d));
   let hung = false, ended = false;
