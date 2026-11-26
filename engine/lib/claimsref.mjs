@@ -10,6 +10,7 @@ import crypto from 'node:crypto';
 import { boundedSync } from './bounded.mjs';
 import { refSha } from './gitfacts.mjs';
 import { withLock } from './records.mjs';
+import { writeBlob } from './ledger.mjs';
 
 export class ClaimsError extends Error {}
 
@@ -43,11 +44,12 @@ export function fetchRefs(f, extra = []) {
 }
 const tipOf = f => rgit(f, ['rev-parse', '-q', '--verify', `${SYNC_CLAIMS}^{commit}`], { ok: [0, 1] }).out.trim() || null;
 // "<sha> <type> <size>\n<content>\n" records of one `git cat-file --batch` (sizes are bytes: parse the Buffer). heads: { sha, body }
-// per object (an input line may name a revision; the header carries the sha it resolved to)
-function catBatch(f, shas, { heads = false } = {}) {
+// per object (an input line may name a revision; the header carries the sha it resolved to); raw: each body a Buffer (sync.mjs copies
+// a home's blobs verbatim through it: one reader per home)
+export function catBatch(f, shas, { heads = false, raw = false, maxBuffer = 64 * 1024 * 1024 } = {}) {
   if (!shas.length) return [];
   const env = { ...process.env, GIT_DIR: f.dir };
-  const r = boundedSync('git', ['cat-file', '--batch'], { env, input: shas.join('\n') + '\n', encoding: null, timeout: 120000, maxBuffer: 64 * 1024 * 1024 });
+  const r = boundedSync('git', ['cat-file', '--batch'], { env, input: shas.join('\n') + '\n', encoding: null, timeout: 120000, maxBuffer });
   if (r.status !== 0) throw new ClaimsError(`git cat-file failed: ${String(r.stderr).trim()}`);
   const buf = r.stdout, out = [];
   let i = 0;
@@ -55,7 +57,7 @@ function catBatch(f, shas, { heads = false } = {}) {
     const nl = buf.indexOf(10, i), head = buf.subarray(i, nl).toString('utf8').split(' ');
     if (head[1] === 'missing') { out.push(null); i = nl + 1; continue; }
     const size = Number(head[2]);
-    const body = buf.subarray(nl + 1, nl + 1 + size).toString('utf8');
+    const body = raw ? Buffer.from(buf.subarray(nl + 1, nl + 1 + size)) : buf.subarray(nl + 1, nl + 1 + size).toString('utf8');
     out.push(heads ? { sha: head[0], body } : body);
     i = nl + 1 + size + 1;
   }
@@ -101,7 +103,7 @@ export function casClaims(f, tip, edits, msg, { beforePush } = {}) {
   try {
     rgit(f, tip ? ['read-tree', tip] : ['read-tree', '--empty'], { index });
     const lines = Object.entries(edits).map(([key, c]) => (c === null ? `0 ${'0'.repeat(40)}\t${key}`   // mode 0 = remove (no work tree needed)
-      : `100644 ${rgit(f, ['hash-object', '-w', '--stdin'], { input: JSON.stringify(c, null, 1) + '\n' }).out.trim()}\t${key}`));
+      : `100644 ${writeBlob(f, Buffer.from(JSON.stringify(c, null, 1) + '\n'))}\t${key}`));
     rgit(f, ['update-index', '--add', '--remove', '-z', '--index-info'], { index, input: lines.join('\0') + '\0' });
     const tree = rgit(f, ['write-tree'], { index }).out.trim();
     const sha = rgit(f, ['commit-tree', tree, ...(tip ? ['-p', tip] : []), '-m', msg]).out.trim();

@@ -15,7 +15,7 @@ import { spawnSync, spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { withLock, homeOf, KINDS, SHARED_KINDS, loadShared, primaryOf, record, RecordError, foldKey, keyBefore, HOME_RE, homeOfId } from './records.mjs';
 import { writeBlob, secretsOf, ensureLedger, ledgerConfig } from './ledger.mjs';
-import { rgit, fetchRefs, under, fedOf, SYNC_CLAIMS, CLAIMS } from './claimsref.mjs';
+import { rgit, fetchRefs, under, fedOf, catBatch, SYNC_CLAIMS, CLAIMS } from './claimsref.mjs';
 import { readJsonS } from './fsnap.mjs';
 import { updateMachine } from './config.mjs';
 import { localClaims, observeClaims, updateSync, listClaims, registerHome, homeKey, projectKey, setHomeName, homeNames } from './claims.mjs';
@@ -177,11 +177,9 @@ export function publishHome(cfg0, o = {}) {
 
 const notesOf = (cfg, p) => path.join(cfg.state_root, p, 'sync', 'copy-integrity.json');   // records.mjs homeStreams reads it
 const blobSha = b => crypto.createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${b.length}\0`), b])).digest('hex');
-function blobBytes(f, sha) {
-  const r = spawnSync('git', ['cat-file', 'blob', sha], { env: { ...process.env, GIT_DIR: f.dir }, windowsHide: true, maxBuffer: 256 * 1024 * 1024 });
-  if (r.status !== 0) throw new Error(`git cat-file ${sha} failed: ${String(r.stderr).trim()}`);
-  return r.stdout;
-}
+// a home's blobs this pass reads (its home.json files, the changed copies) in one `cat-file --batch`: sha -> Buffer | null (missing)
+function blobsOf(f, shas) { const u = [...new Set(shas)], b = catBatch(f, u, { raw: true, maxBuffer: 256 * 1024 * 1024 }); return new Map(u.map((s, i) => [s, b[i]])); }
+const blobOf = (blobs, sha) => { const b = blobs.get(sha); if (!b) throw new Error(`git cat-file ${sha} failed: missing`); return b; };
 
 /**
  * fetchHomes(cfg): fetch home/* + claims, then write each changed blob of another home's branch, for this machine's synced projects, to
@@ -211,21 +209,24 @@ export function fetchHomes(cfg0, o = {}) {
     for (const h of homes) {
       const ents = rgit(f, ['ls-tree', '-r', '-z', tips[h]]).out.split('\0').filter(Boolean).map(l => { const [meta, rel] = l.split('\t'); return { sha: meta.split(' ')[2], rel }; });
       // SPEC 3.7: a log copy that is not an append of the last copy is an integrity row, unless the home's cut_at changed (a re-cut)
-      const recut = {};
-      for (const e of ents) {
-        const [p, x, ...more] = e.rel.split('/');
-        if (x !== 'home.json' || more.length || !mine.includes(p)) continue;
-        let cut = null; try { cut = JSON.parse(blobBytes(f, e.sha)).cut_at ?? null; } catch { /* no cut_at: compared as null */ }
+      const recut = {}, cuts = ents.filter(e => { const [p, x, ...more] = e.rel.split('/'); return x === 'home.json' && !more.length && mine.includes(p); });
+      // the copies that differ (each dest is written once, by its own entry: reading them all first sees what the loop below saw)
+      const copies = ents.flatMap(e => {
+        const [p, ...rest] = e.rel.split('/');
+        if (!mine.includes(p) || !rest.length || !rest.every(s => SEG.test(s))) return [];
+        const dest = path.join(cfg.state_root, p, 'homes', h, ...rest);
+        let cur = null; try { cur = fs.readFileSync(dest); } catch { /* new copy */ }
+        return cur && blobSha(cur) === e.sha ? [] : [{ sha: e.sha, p, dest, file: rest.join('/'), cur }];
+      });
+      const blobs = blobsOf(f, [...cuts.map(e => e.sha), ...copies.map(c => c.sha)]);
+      for (const e of cuts) {
+        const p = e.rel.split('/')[0];
+        let cut = null; try { cut = JSON.parse(blobs.get(e.sha)).cut_at ?? null; } catch { /* missing or no cut_at: compared as null */ }
         recut[p] = cut !== (readJsonS(path.join(cfg.state_root, p, 'homes', h, 'home.json'))?.cut_at ?? null);
         if (recut[p]) noted[p] = noted[p].filter(r => r.home !== h);
       }
-      for (const e of ents) {
-        const [p, ...rest] = e.rel.split('/');
-        if (!mine.includes(p) || !rest.length || !rest.every(s => SEG.test(s))) continue;
-        const dest = path.join(cfg.state_root, p, 'homes', h, ...rest), file = rest.join('/');
-        let cur = null; try { cur = fs.readFileSync(dest); } catch { /* new copy */ }
-        if (cur && blobSha(cur) === e.sha) continue;
-        const b = blobBytes(f, e.sha);
+      for (const { sha, p, dest, file, cur } of copies) {
+        const b = blobOf(blobs, sha);
         if (cur && file.endsWith('.jsonl') && !recut[p] && !b.subarray(0, cur.length).equals(cur) && !noted[p].some(r => r.home === h && r.file === file))
           noted[p].push({ home: h, file, at: now, why: `the copy of ${file} from home ${h} is not an append of the last copy (fetched ${now})` });
         writeAtomic(dest, b);
