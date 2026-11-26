@@ -156,8 +156,7 @@ test('pickRun: a test whose // reads: header matches a changed file runs (light:
 
 // NORN-IMPACT-READS: cisuite pickTests - a test the impact map's recorded reads name for a changed doc ranks with the importers, under the cap
 test('pickTests: impact.json recorded readers of a changed doc are picked under the importers cap; no impact map, no recorded pick', () => {
-  const tests = Array.from({ length: 22 }, (_, i) => `tests/r${String(i).padStart(2, '0')}.test.mjs`), read = () => "import test from 'node:test';
-";
+  const tests = Array.from({ length: 22 }, (_, i) => `tests/r${String(i).padStart(2, '0')}.test.mjs`), read = () => "import test from 'node:test';\n";
   const impact = { sources: {}, recorded: { 'docs/p.md': Object.fromEntries(tests.map(t => [t, { basis: 'recorded', key: 'k', at: 'now' }])) } };
   assert.deepEqual(pickTests(['docs/p.md'], tests, read, Infinity, impact).run, tests);
   assert.deepEqual(pickTests(['docs/p.md'], tests, read, 20).run, [], 'no impact map: no recorded pick');
