@@ -12,6 +12,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { which, resolveShim } from '../paths.mjs';
 import { metaRoot } from '../config.mjs';
+import { gen } from '../setup.mjs';
 import { askVoice } from './voice.mjs';
 import { RUFF } from './lang/py.mjs';
 import { CLIPPY } from './lang/rs.mjs';   // not lang/index.mjs: lang/js.mjs imports this module (a cycle)
@@ -33,7 +34,8 @@ export function eslintConfig({ rules = {}, repo = false }) {
   const tail = { files: JS_FILES, linterOptions: { noInlineConfig: true } };
   return `${repo ? "import repo from './repo.eslint.config.mjs';\n" : ''}export default [${JSON.stringify(head)}, ...${repo ? 'repo' : '[]'}, ${JSON.stringify(tail)}];\n`;
 }
-export const NORN = path.join(HERE, '..', '..', 'bin', 'norn.mjs');
+// RM-26 S6: a command rule's argv runs in this process, not as a node CLI child per check; `norn gen --check` (K14) is the one slop command
+const COMMANDS = { gen: (args, o) => gen({ check: args.includes('--check'), ...o }) };
 export const toolCache = (env = process.env) => path.join(metaRoot(env), 'state', 'tools');
 
 /**
@@ -207,7 +209,7 @@ export function astGrepOut(r, dir, src) {
  * The real tool runner: tool(rule, side, { dir, texts }) -> raw output | null (no output for that side). A tool rule here is the
  * ONE ESLint run of a check: { tool: 'eslint', rules, config (the merge base's repo config text, or null) } over texts,
  * Map(path -> that side's text), or the ONE ast-grep scan of a check: { tool: 'ast-grep', rules: [ast-grep rule data] } over texts;
- * a ruff / clippy rule goes to its language pack's run. A command rule runs once, at check time in dir (its output is the machine's, not a side's: the
+ * a ruff / clippy rule goes to its language pack's run. A command rule runs once, at check time, in this process (its stdout is the machine's, not a side's: the
  * check keeps only the lines whose source the diff touches). A sarif rule with `scan` runs its pinned scanner (scanRun; o.download: the fetch). A model read (kind `model`: { id, prompt }) is one call on o.voice in
  * its mode, the route voiceRoute picked at the launch; with no route (a door, `norn slop check`) it throws: each model rule is a
  * WARN "could not run" (the voice holds nothing) and reads at the run end. o.used: the project's reads today; at the route's cap it
@@ -222,9 +224,10 @@ export function makeTool({ env = process.env, voice = null, used = 0, download }
       return askVoice(voice, rule.prompt, { env });
     }
     if (rule.kind === 'command') {
-      const r = spawnSync(process.execPath, [NORN, ...rule.argv], { cwd: dir, env, encoding: 'utf8', windowsHide: true, maxBuffer: 1 << 26 });
-      if (r.error) throw r.error;
-      return r.stdout;
+      const [cmd, ...args] = rule.argv, lines = [];
+      if (!COMMANDS[cmd]) throw new Error(`${rule.id}: ${cmd} is no slop command`);
+      try { COMMANDS[cmd](args, { env, out: s => lines.push(s + '\n'), err: () => {} }); } catch { /* as the CLI: an error is stderr's, stdout keeps what was written */ }
+      return lines.join('');
     }
     if (rule.tool === 'sarif' && rule.scan) return scanRun(rule, side, { dir, texts, env, download });
     if (PROJECT_TOOLS[rule.tool]) return PROJECT_TOOLS[rule.tool].run(rule, side, { dir, texts, env });
