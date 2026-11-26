@@ -72,7 +72,7 @@ export function briefPlan(text) {
 
 // ---------- the transcript fold: the tool calls with their time, the commits, the tests ----------
 const COMMIT_RE = /\bgit\s+(?:-C\s+\S+\s+)?commit\b/;
-export const resultText = b => typeof b.content === 'string' ? b.content : Array.isArray(b.content) ? b.content.map(x => x?.text ?? '').join('\n') : '';
+const resultText = b => typeof b.content === 'string' ? b.content : Array.isArray(b.content) ? b.content.map(x => x?.text ?? '').join('\n') : '';
 /** pass / fail counts of a test run's output (node --test spec and TAP summaries, summed; pytest's line; ci-suite's red line) | null */
 export function testCounts(text) {
   const t = String(text ?? ''), sum = re => { let n = null; for (const m of t.matchAll(re)) n = (n ?? 0) + Number(m[1]); return n; };

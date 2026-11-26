@@ -18,7 +18,7 @@ import path from 'node:path';
 import { classify } from './testcmd.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
 import { isBrowserTest, importsOf, pickTests, readsOf, readsMatch } from './cisuite.mjs';
-import { workInit, onWork, resultText } from './progress.mjs';
+import { workInit, onWork } from './progress.mjs';
 import { TIMES_FILE, IMPACT_FILE } from './testtimes.mjs';
 import { fwd } from './config.mjs';
 import { readText } from './fsnap.mjs';
@@ -90,6 +90,8 @@ function unionMs(calls) {
 }
 // a `norn tests run` result line per file it ran or reused (testscli.mjs): "pass tests/a.test.mjs 2.1 s" | "FAIL tests/a.test.mjs ..."
 const RESULT = /^(pass|FAIL) \S*?([\w.-]+\.test\.[cm]?[jt]s)\b/gm;
+/** a tool_result block -> its `norn tests run` result lines as [line, 'pass' | 'FAIL', file name] (its content: a string or text parts) */
+const resultLines = b => [b.content].flat().map(x => (typeof x === 'string' ? x : x?.text ?? '')).flatMap(x => [...x.matchAll(RESULT)]);
 /**
  * a transcript's test facts -> { ms: the wall time of its finished test calls, failed: the test file names a `norn tests run` reported
  * FAIL, reruns: the test calls that started with ms already at budgetMs and ran files (a refused one prints no result line) }
@@ -107,7 +109,7 @@ export function testRunOf(text, budgetMs = Infinity) {
       onWork(c, { ...j, message: { ...m, content: [b] } });
       const call = c.calls.length > n ? c.calls[c.calls.length - 1] : null;
       if (call?.kind !== 'test') continue;
-      const res = [...resultText(b).matchAll(RESULT)];
+      const res = resultLines(b);
       if (res.length && before >= budgetMs) reruns++;
       for (const x of res) if (x[1] === 'FAIL') failed.add(x[2]);
     }
