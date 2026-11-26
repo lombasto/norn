@@ -13,7 +13,6 @@ import { depsOf } from '../engine/lib/slop/kinds.mjs';
 import { eslintConfig, astGrepOut } from '../engine/lib/slop/tools.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
-import { fastRepo } from './helpers/git-fast.mjs';
 import { rustReady } from './helpers/rust.mjs';
 
 test.before(() => rustReady());   // the graph rules read norn-code: a cold build (minutes on a fresh store) runs here, never in a step
@@ -127,8 +126,10 @@ test('the ESLint config is written from data: Choppa\'s core rules, the merge ba
 
 // slop-langs S1 (SPEC 3.4): the kind ast on ast-grep - match data per pack, shadow_langs, fail-closed
 const fxRepo = ({ base, head }) => {
-  const repo = mkTmp('slop-ast-');
-  fastRepo(repo, [{ ref: 'main', msg: 'base', files: base }, { ref: 'feat/x', from: 0, msg: 'head', files: head }], { head: 'feat/x', autocrlf: false });
+  const repo = mkTmp('slop-ast-'), git = (...a) => { const r = spawnSync('git', a, { cwd: repo, encoding: 'utf8', windowsHide: true }); if (r.status) throw new Error(r.stderr); };
+  const put = fs2 => { for (const [f, t] of Object.entries(fs2)) { fs.mkdirSync(path.dirname(path.join(repo, f)), { recursive: true }); fs.writeFileSync(path.join(repo, f), t); } };
+  git('init', '-q', '-b', 'main'); git('config', 'user.email', 't@t'); git('config', 'user.name', 't'); git('config', 'core.autocrlf', 'false');
+  put(base); git('add', '-A'); git('commit', '-qm', 'base'); git('checkout', '-qb', 'feat/x'); put(head); git('add', '-A'); git('commit', '-qm', 'head');
   return repo;
 };
 const AST = effectiveRules().filter(r => r.kind === 'ast');
@@ -217,8 +218,12 @@ test('ast-grep fails closed: exit 8 (a rule that does not parse), an ERROR: line
 
 test('checkBranch: the rules of the project folder join the check; K22 passes a cited open id and holds a closed one', () => {
   const repo = mkTmp('slop-branch-'), git = (...a) => { const r = spawnSync('git', a, { cwd: repo, encoding: 'utf8', windowsHide: true }); if (r.status) throw new Error(r.stderr); };
-  fastRepo(repo, [{ ref: 'main', msg: 'base', files: { 'docs/guide.md': '# Guide\n' } },
-    { ref: 'feat/x', from: 0, msg: 'head', files: { 'docs/guide.md': '# Guide\n\nThen `oldtool stop`.\n', 'a.mjs': '// for now the retry is off (RM-1)\n// a stop-gap until RM-2 lands\nexport const a = 1;\n' } }], { head: 'feat/x', autocrlf: false });
+  git('init', '-q', '-b', 'main'); git('config', 'user.email', 't@t'); git('config', 'user.name', 't'); git('config', 'core.autocrlf', 'false');
+  fs.mkdirSync(path.join(repo, 'docs')); fs.writeFileSync(path.join(repo, 'docs', 'guide.md'), '# Guide\n'); git('add', '-A'); git('commit', '-qm', 'base');
+  git('checkout', '-qb', 'feat/x');
+  fs.writeFileSync(path.join(repo, 'docs', 'guide.md'), '# Guide\n\nThen `oldtool stop`.\n');
+  fs.writeFileSync(path.join(repo, 'a.mjs'), '// for now the retry is off (RM-1)\n// a stop-gap until RM-2 lands\nexport const a = 1;\n');
+  git('add', '-A'); git('commit', '-qm', 'head');
   const c = checkBranch({ repo, projectDir: SYNTH, tool: () => null });
   assert.ok(c.result.ran.includes('P-retired') && !c.result.ran.includes('K11'), c.result.ran.join(' '));
   assert.deepEqual(c.result.findings.filter(f => f.rule === 'P-retired').map(f => [f.token, f.new]), [['oldtool stop', true]]);
