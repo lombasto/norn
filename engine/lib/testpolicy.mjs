@@ -127,12 +127,13 @@ const stem = f => (/\.m?js$/.test(f) && !f.startsWith('tests/') ? f.split('/').p
  * mode light: the test files that DIRECTLY cover the changed files - every changed test file, then per changed source module `per` (1)
  * of: its own test (<stem>.test.mjs), the tests named after it (<stem>-*.test.mjs), the tests that import it directly (when an impact
  * map from `norn tests index` exists, only those its coverage confirms); fastest first by `ms` (file -> its median ms, times.json). A
- * module none of them reaches is named in `none` (left to CI). Besides: every test whose `// reads:` header matches a changed file. mode changed: ci-suite's pick (cisuite.mjs pickTests, importers capped
- * at 20). -> { run: [test files], none: [changed modules no test covers directly], left: [importers past the cap] }
+ * module none of them reaches is named in `none` (left to CI). Besides: every test whose `// reads:` header matches a changed file, and
+ * every test impact.recorded names for a changed file. mode changed: ci-suite's pick (cisuite.mjs pickTests, importers and recorded
+ * readers capped at 20). -> { run: [test files], none: [changed modules no test covers directly], left: [importers past the cap] }
  */
 export function pickRun({ mode, changed, tests, read, impact = null, ms = {}, per = 1 }) {
   const ch = [...new Set(changed.map(fwd))], all = tests.map(fwd);
-  if (mode === 'changed') { const p = pickTests(ch, all, read, 20); return { run: p.run, none: [], left: p.left }; }
+  if (mode === 'changed') { const p = pickTests(ch, all, read, 20, impact); return { run: p.run, none: [], left: p.left }; }
   const run = new Set(all.filter(t => ch.includes(t))), none = [], text = new Map();
   const src = f => { if (!text.has(f)) text.set(f, read(f)); return text.get(f); };
   const fast = (a, b) => (ms[a] ?? Infinity) - (ms[b] ?? Infinity) || a.localeCompare(b);
@@ -147,6 +148,8 @@ export function pickRun({ mode, changed, tests, read, impact = null, ms = {}, pe
   }
   // DEC-a-648: a test that declares a changed file in its `// reads:` header asserts on its content - it runs, whatever the per pick
   for (const t of all) { const rd = readsOf(src(t)); if (rd.length && ch.some(f => readsMatch(rd, f))) run.add(t); }
+  // DEC-a-677: a test whose stored pass read a changed file (impact.json recorded, NORN-IMPACT-READS) runs too, if it still exists
+  for (const f of ch) for (const t of Object.keys(impact?.recorded?.[f] ?? {})) if (all.includes(t)) run.add(t);
   return { run: [...run].sort(), none, left: [] };
 }
 /** pickRun over a repo's own tests/*.test.mjs (none when it has no tests/ folder: a project that is not node-tested), with the last
