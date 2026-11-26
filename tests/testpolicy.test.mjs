@@ -163,3 +163,14 @@ test('pickTests: impact.json recorded readers of a changed doc are picked under 
   const ch = pickTests(['docs/p.md'], tests, read, 20, impact);
   assert.deepEqual([ch.run.length, ch.left], [20, ['tests/r20.test.mjs', 'tests/r21.test.mjs']]);
 });
+
+// DEC-a-677 (RM-26): the lane picks use impact.json's recorded readers of a changed non-code file; no impact map, the pick as before
+test('pickRun: light and changed pick the recorded readers of a changed doc (only tests that exist); impact null picks as before', () => {
+  const src = { 'tests/a.test.mjs': "import test from 'node:test';\n", 'tests/b.test.mjs': "import test from 'node:test';\n", 'tests/lint.test.mjs': "// reads: **\nimport test from 'node:test';\n" };
+  const tests = Object.keys(src), read = f => src[f] ?? null, rec = { basis: 'recorded', key: 'k', at: 'now' };
+  const impact = { sources: {}, recorded: { 'engine/prompts/CHECKIN.md': { 'tests/a.test.mjs': rec, 'tests/gone.test.mjs': rec } } };
+  for (const mode of ['light', 'changed']) {
+    assert.deepEqual(pickRun({ mode, changed: ['engine/prompts/CHECKIN.md'], tests, read, impact }), { run: ['tests/a.test.mjs', 'tests/lint.test.mjs'], none: [], left: [] }, mode);
+    assert.deepEqual(pickRun({ mode, changed: ['engine/prompts/CHECKIN.md'], tests, read }), { run: ['tests/lint.test.mjs'], none: [], left: [] }, `${mode}: impact null`);
+  }
+});
