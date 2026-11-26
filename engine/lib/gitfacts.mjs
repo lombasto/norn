@@ -139,18 +139,21 @@ export function isAncestorOf(wt, common, a, b) {
 }
 
 /**
- * worktreeFacts(wt, { main ('refs/remotes/origin/main'), ttlMs, commits }) -> { branch | null, tip, base, touched, commits } | null (no
+ * worktreeFacts(wt, { main ('refs/remotes/origin/main'), ttlMs, commits, ahead }) -> { branch | null, tip, base, touched, commits } | null (no
  * checkout). touched = the files the worktree changes against its merge-base with main: its commits + its uncommitted tracked edits (`git
  * diff --name-only <base>`, the one call that reads the working tree). ttlMs > 0: a touched list read for the same (tip, base) within
- * ttlMs is reused (the queue walk's pre-check: the start itself reads it fresh). commits false: not counted (0). No main ref = no base:
- * touched [] and commits 0.
+ * ttlMs is reused (the queue walk's pre-check: the start itself reads it fresh). commits false: not counted (0). ahead: the commit count
+ * (memoized sha facts) comes first and a worktree 0 commits ahead of main is not diffed (touched []): a caller that drops such a lane
+ * never reads its touched list, and the diff is the costly call. No main ref = no base: touched [] and commits 0.
  */
-export function worktreeFacts(wt, { main = 'refs/remotes/origin/main', ttlMs = 0, now = Date.now(), commits = true } = {}) {
+export function worktreeFacts(wt, { main = 'refs/remotes/origin/main', ttlMs = 0, now = Date.now(), commits = true, ahead = false } = {}) {
   if (!wt || !fs.existsSync(wt)) return null;
   const h = headOf(wt);
   if (!h) return null;
   const branch = h.branch === 'HEAD' ? null : h.branch, ms = h.sha && shaOf(wt, main), base = ms ? mergeBase(wt, h.common, h.sha, ms) : null;
   if (!base) return { branch, tip: h.sha, base: null, touched: [], commits: 0 };
+  const n = ahead || commits ? countOf(wt, h.common, ms, h.sha) : 0;
+  if (ahead && !n) return { branch, tip: h.sha, base, touched: [], commits: 0 };
   const m = memoOf(h.common), k = `wt ${pathKey(wt)}`, e = m.data[k];
   let touched;
   if (ttlMs > 0 && e?.tip === h.sha && e.base === base && now - e.at < ttlMs) touched = e.files;
@@ -159,5 +162,5 @@ export function worktreeFacts(wt, { main = 'refs/remotes/origin/main', ttlMs = 0
     touched = o === null ? [] : lines(o);
     if (o !== null) { m.data[k] = { tip: h.sha, base, files: touched, at: now }; m.dirty.add(k); }
   }
-  return { branch, tip: h.sha, base, touched, commits: commits ? countOf(wt, h.common, ms, h.sha) : 0 };
+  return { branch, tip: h.sha, base, touched, commits: n };
 }

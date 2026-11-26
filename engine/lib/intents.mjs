@@ -71,9 +71,9 @@ function tipFacts(repo, tip, ref) {
   const c = commonOf(repo), base = tip && ref.sha && mergeBase(repo, c, tip, ref.sha);
   return base ? { touched: diffNames(repo, c, base, tip) ?? [], commits: countOf(repo, c, ref.sha, tip) } : { touched: [], commits: 0 };
 }
-/** a worktree's facts: { branch, tip, touched (commits + tracked edits), commits } | null */
-function treeFacts(wt, ref, ttlMs = 0) {
-  const f = worktreeFacts(wt, { main: ref.ref, ttlMs });
+/** a worktree's facts: { branch, tip, touched (commits + tracked edits), commits } | null; ahead: not diffed at 0 commits (gitfacts) */
+function treeFacts(wt, ref, ttlMs = 0, ahead = false) {
+  const f = worktreeFacts(wt, { main: ref.ref, ttlMs, ahead });
   return f && { branch: f.branch, tip: f.tip, touched: f.touched, commits: f.commits };
 }
 export const onMain = (repo, tip, ref) => !!tip && !!ref.sha && isAncestorOf(repo, commonOf(repo), tip, ref.sha);
@@ -143,7 +143,7 @@ export function gatherIntents({ state, repo, main = 'main', remote = 'origin', n
     mergedAt.set(x.data.lane, Math.max(mergedAt.get(x.data.lane) ?? 0, Date.parse(e.ts) || 0));
   for (const [lane, r] of last) {
     if (out.has(lane) || LIVE[r.state] || now - endOf(r) > recent_days * 864e5 || !ref || (mergedAt.get(lane) ?? -1) >= endOf(r)) continue;
-    const g = treeFacts(r.data.worktree, ref, ttlMs);
+    const g = treeFacts(r.data.worktree, ref, ttlMs, true);   // the count first: a lane 0 commits ahead is dropped, so it is not diffed
     if (g?.commits) out.set(lane, { ...intentOf(r, 'unlanded'), ...g, since: endOf(r) });
   }
   const intents = [...out.values()];
