@@ -92,7 +92,13 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
   round the row's "fix task" names, and do the steps it lists (create / unarchive the lane, wait after a live fix run, a first
   brief step resetting the lane branch from main when its last work landed). The brief names the run id, the sha and the failing
   tests and asks for the cause fixed red-first - never a re-run to green it, never a retry or a longer timeout. The row leaves only
-  when a later run on main is green; one fix stage per red run (check the queue / live runs first).
+  when a later run on main is green; one fix stage per red run on this home (check the queue / live runs first).
+- Synced project (more than one home in `META sync status`; DEC-a-673): before queuing, `META runs --homes --json` and `META claim
+  list` - another home's run on its `<home>/ci-fix` lane with this red's stage (`CI-<run id>`; queued, running or ended) or its
+  `ci-fix` claim = that home owns this red: queue nothing, say so in the ledger line. None: queue yours, then mail each other home's
+  controller (`META mail send --to role:controller@<home>`, subject naming the stage and your RUN id). Two homes queued the same red:
+  the earlier `created` owns it; the later home withdraws its own while still queued (`META stop RUN-n --why "duplicate of
+  RUN-<home>-n (DEC-a-673)"`); one already started is left to end.
 
 ## 2e. Roadmap (status is derived from the records, never typed; skip while the project has no roadmap: `META road list` empty)
 - A new owner directive lands on the roadmap the SAME tick: `META road add --from DIR-n --theme RM-n` (a new item) or
