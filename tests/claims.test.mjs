@@ -35,6 +35,15 @@ test('registry: a home registers by CAS-creating homes/<id>.json; the id is then
   assert.equal(registerProject(g.ep('b'), { project: 'demo', repo: 'owner/demo', bare_home: 'b' }).exists, true);
 });
 
+test('a claim blob written in process has the sha `git hash-object` gives its bytes, and the pushed remote reads it', () => {
+  const g = rig();
+  registerHome(g.ep('a'), { id: 'a', branch: 'home/a', projects: ['demo'], now: Date.UTC(2026, 10, 20) });
+  const body = JSON.stringify(g.at('homes/a.json'), null, 1) + '\n';
+  const want = spawnSync('git', ['hash-object', '--stdin'], { input: body, encoding: 'utf8', windowsHide: true }).stdout.trim();
+  assert.equal(gitIn(g.remote, 'rev-parse', 'refs/heads/claims:homes/a.json'), want);
+  assert.equal(gitIn(g.remote, 'cat-file', 'blob', want) + '\n', body);
+});
+
 test('claimWork: a new claim is one CAS commit of work/<project>/<home>/<lane>.json; an unchanged own claim costs no push; a change bumps n', () => {
   const g = rig(), fa = g.ep('a');
   const r = claimWork(fa, me('a', 'x', { items: ['RM-a-1'] }));
