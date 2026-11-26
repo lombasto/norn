@@ -154,3 +154,11 @@ test('digest: a CI-red row (run, sha, failing tests) while main is red; it leave
   assert.deepEqual(digest(state, p, opt(22)).sections.ci, [], 'a later green run: the row leaves');
   assert.deepEqual(digest(state, { name: 'noci', state }, opt(0)).sections.ci, [], 'no ci key: no section rows');
 });
+
+test('CHECKIN 2d: a synced check-in looks at the other homes before it queues a ci-fix round (DEC-a-673)', () => {
+  const ck = fs.readFileSync(new URL('../engine/prompts/CHECKIN.md', import.meta.url), 'utf8').split(/\r?\n/);
+  const at = ck.findIndex(l => l.startsWith('## 2d.')); assert.ok(at >= 0, 'section 2d exists');
+  const end = ck.findIndex((l, i) => i > at && l.startsWith('## '));
+  const d = ck.slice(at, end < 0 ? undefined : end).join('\n');
+  for (const s of ['runs --homes', 'claim list', 'role:controller@', 'META stop', 'DEC-a-673']) assert.ok(d.includes(s), `2d names ${s}`);
+});
