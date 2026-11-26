@@ -10,6 +10,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { startRun, sweepLost } from '../engine/lib/runs.mjs';
 import { loadState } from '../engine/lib/records.mjs';
 import { holdGone } from '../engine/lib/jobguard.mjs';
+import { timed } from './helpers/race.mjs';
 import { jobguardExe, jobguardExeAsync, winQuote } from '../engine/lib/bounded.mjs';
 import { killsFile, readKills } from '../engine/lib/kills.mjs';
 import { settled } from './helpers/settled.mjs';
@@ -184,7 +185,7 @@ test('jobguard hold: ends when the held process exits even while its stdin stays
     await new Promise((res, rej) => { hold.stdout.on('data', d => { out += d; if (/^ok/m.test(out)) res(); if (/^err/m.test(out)) rej(new Error(out)); }); hold.once('exit', c => rej(new Error(`hold exited ${c}: ${out}`))); });
     const gone = new Promise(r => hold.once('exit', r));
     held.kill();   // the held process ends; the hold's stdin is still open here
-    assert.equal(await Promise.race([gone.then(() => true), new Promise(r => setTimeout(() => r(false), 20000))]), true, 'the hold exited with the held process');
+    assert.equal(await timed(gone.then(() => true), 20000, false), true, 'the hold exited with the held process');
   } finally { try { hold.kill(); } catch { /* gone */ } try { held.kill(); } catch { /* gone */ } }
   // CI 44343850063 (queue: a stop right after the start): the supervisor died while its hold started. A hold given a pid that is gone
   // (or reused by a later process) refuses with "err" and exits, its stdin still open here - it never waits on a stranger
@@ -193,7 +194,7 @@ test('jobguard hold: ends when the held process exits even while its stdin stays
   const late = spawn(exe, ['hold', String(dead.pid), `meta-test-${dead.pid}-${Date.now()}`], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
   try {
     let out = ''; late.stdout.on('data', d => { out += d; });
-    const code = await Promise.race([new Promise(r => late.once('exit', r)), new Promise(r => setTimeout(() => r('alive'), 20000))]);
+    const code = await timed(new Promise(r => late.once('exit', r)), 20000, 'alive');
     assert.equal(code, 1, `the hold of a gone pid exits 1 (${out.trim()})`); assert.match(out, /^err /m);
   } finally { late.kill(); }   // a no-op (false) once it has exited
   const p = spawn(process.execPath, ['-e', 'process.stdin.resume(); process.stdin.on("end", () => setTimeout(() => process.exit(0), 200))'], { stdio: ['pipe', 'ignore', 'ignore'] });
@@ -233,10 +234,10 @@ test('jobguard hold exits when its supervisor dies even while its stdin write en
     await new Promise((res, rej) => { hold.stdout.on('data', d => { out += d; if (/^(ok|err)/m.test(out)) res(); }); hold.on('exit', () => rej(new Error(`hold exited: ${out}`))); });
     assert.match(out, /^ok/m);
     sup.kill();   // the supervisor dies; this test still holds the hold's stdin write end open
-    const r = await Promise.race([exited.then(() => 'exited'), sleep(5000).then(() => 'alive')]);
+    const r = await timed(exited.then(() => 'exited'), 5000, 'alive');
     assert.equal(r, 'exited', `hold ${hold.pid} still alive 5 s after its supervisor ${sup.pid} died`);
     const gone = spawn(exe, ['hold', String(sup.pid), `meta-jgp-gone-${Date.now()}`], { stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
-    const r2 = await Promise.race([new Promise(res => gone.on('exit', () => res('exited'))), sleep(5000).then(() => 'alive')]);
+    const r2 = await timed(new Promise(res => gone.on('exit', () => res('exited'))), 5000, 'alive');
     if (r2 !== 'exited') gone.kill();
     assert.equal(r2, 'exited', 'a hold whose supervisor is already gone exits at once');
   } finally { try { hold.stdin.end(); } catch { /* the hold already exited and closed its stdin: nothing to end, the kills below still run */ } if (hold.exitCode === null) hold.kill(); if (sup.exitCode === null) sup.kill(); }
