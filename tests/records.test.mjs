@@ -238,7 +238,7 @@ test('lock: exclusive, breaks a stale lock (> 10 s), released after a throw', ()
 });
 
 // NORN-LOCK-DEAD-PID: a lock whose holder pid runs no more on this host is broken at once; a live holder / another host waits staleMs
-const deadPid = () => { const r = spawnSync(process.execPath, ['-e', ''], { stdio: 'ignore' }); assert.equal(r.status, 0); return r.pid; };
+const deadPid = () => { const r = spawnSync(process.execPath, ['-e', ''], { stdio: 'ignore', windowsHide: true }); assert.equal(r.status, 0); return r.pid; };
 const lockAt = (lk, o) => fs.writeFileSync(lk, JSON.stringify({ ts: new Date().toISOString(), start: Date.now(), ...o }));
 for (const [name, wl] of [['withLock', (lk, o) => withLock(lk, () => 7, o)], ['withLockAsync', (lk, o) => withLockAsync(lk, async () => 7, o)]]) {
   test(`${name}: a fresh lock left by a pid that is not running on this host is broken at once`, async () => {
