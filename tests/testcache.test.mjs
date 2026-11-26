@@ -149,3 +149,67 @@ test('in a git repo a `**` reads key sees a vendor/ file git lists; a git-ignore
     put('state/wt/z.md', ignore); assert.equal(k(), k1, `a file under the top-level state/ changes nothing (state/ ${ignore.includes('state') ? '' : 'NOT '}ignored)`);
   }
 });
+
+// task-NORN-TEST-RECORD (DEC-a-658): the key holds no data file ENGINE CODE reads for a test (an edited prompt left a stale pass reused).
+// runCached loads engine/lib/readrec.mjs into the test process and its node children; the repo files they read and the folders they list
+// are stored with their hashes beside the pass, which is reused only while none of them changed. The test file names none of them: a
+// helper reads data/x.json, tries data/opt.json, lists data/; a node child reads data/child.txt and is killed once it has.
+const REC_TEST = `import test from 'node:test';
+import fs from 'node:fs';
+import { spawn } from 'node:child_process';
+import { load } from '../engine/h.mjs';
+test('rec', async () => {
+  fs.appendFileSync(process.env.COUNT_FILE, 'x\\n'); load();
+  const c = spawn(process.execPath, ['engine/kid.mjs'], { stdio: ['ignore', 'pipe', 'inherit'] });
+  await new Promise(r => c.stdout.on('data', d => { if (String(d).includes('read')) r(); }));
+  const gone = new Promise(r => c.on('exit', r)); c.kill('SIGKILL'); await gone;
+});
+`;
+const REC_HELPER = `import { readFileSync, readdirSync } from 'node:fs';
+export const load = () => {
+  readFileSync('data/x.json', 'utf8'); readdirSync('data');
+  try { readFileSync('data/opt.json'); } catch { /* optional */ }
+  for (const f of ['state/s.txt', 'ign/i.txt', process.env.OUTSIDE]) readFileSync(f);
+};
+`;
+const REC_KID = `import { readFile } from 'node:fs/promises';
+await readFile('data/child.txt', 'utf8'); process.stdout.write('read\\n'); setInterval(() => {}, 1000);
+`;
+test('a pass records the repo files its test and node children read: reused while none changed, run again (and said) when one did', async () => {
+  const d = mkTmp('meta-tcr-'), root = path.join(d, 'repo'), dir = path.join(d, 'cache'), count = path.join(d, 'count.txt'), outside = path.join(d, 'out.txt');
+  const put = (rel, t) => { fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true }); fs.writeFileSync(path.join(root, rel), t); };
+  put('tests/r.test.mjs', REC_TEST); put('engine/h.mjs', REC_HELPER); put('engine/kid.mjs', REC_KID); put('.gitignore', 'ign/\nstate/\n');
+  put('data/x.json', '{"a":1}\n'); put('data/child.txt', 'c1\n'); put('state/s.txt', 's1\n'); put('ign/i.txt', 'i1\n');
+  fs.writeFileSync(outside, 'o1\n'); fs.writeFileSync(count, '');
+  execFileSync('git', ['init', '-q'], { cwd: root, stdio: 'ignore', windowsHide: true });
+  const starts = () => fs.readFileSync(count, 'utf8').split('\n').filter(Boolean).length, said = [];
+  const k0 = keyOf('tests/r.test.mjs', repoIndex(root), '\0').key;
+  const go = async (run, why) => {
+    const r = await runCached('tests/r.test.mjs', { ix: repoIndex(root), dir, run, childEnv: { COUNT_FILE: count, OUTSIDE: outside }, pollMs: 100, say: l => said.push(l) });
+    assert.equal(r.ok, true, `${run}: ${r.tail}`);
+    assert.equal(r.key, k0, `${run}: keyOf is the same (${why})`);
+    assert.equal(keyOf('tests/r.test.mjs', repoIndex(root), '\0').key, k0);
+    return r.how;
+  };
+  assert.deepEqual([await go('RUN-1', 'first'), await go('RUN-2', 'again'), starts()], ['ran', 'reused', 1]);
+  const rec = freshPass(dir, k0).reads;
+  assert.deepEqual(Object.keys(rec.files), ['data/child.txt', 'data/opt.json', 'data/x.json'], 'the test and its imports (in the key), state/, ignored and outside files are left out');
+  assert.equal(rec.files['data/opt.json'], '<missing>');
+  assert.deepEqual(Object.keys(rec.dirs), ['data']);
+  put('data/x.json', '{"a":2}\n');
+  assert.deepEqual([await go('RUN-3', 'x.json edited'), await go('RUN-4', 'again'), starts()], ['ran', 'reused', 2]);
+  assert.match(said.join('\n'), /tests\/r\.test\.mjs: its pass of \S+ read data\/x\.json, changed since - running it again/);
+  put('data/y.json', '{}\n');
+  assert.deepEqual([await go('RUN-5', 'data/ listing'), starts()], ['ran', 3]);
+  assert.match(said.at(-1), /read data, changed since/);
+  put('data/child.txt', 'c2\n');
+  assert.deepEqual([await go('RUN-6', 'the killed child read it'), starts()], ['ran', 4]);
+  put('data/opt.json', '{}\n');
+  assert.deepEqual([await go('RUN-7', 'the absent file made'), starts()], ['ran', 5]);
+  put('state/s.txt', 's2\n'); put('ign/i.txt', 'i2\n'); fs.writeFileSync(outside, 'o2\n');
+  assert.deepEqual([await go('RUN-8', 'state/, ignored, outside'), starts()], ['reused', 5]);
+  // the old shape: a pass with no record of its reads is not reused
+  const rf = path.join(dir, `${k0}.json`), old = JSON.parse(fs.readFileSync(rf, 'utf8')); delete old.reads; fs.writeFileSync(rf, JSON.stringify(old));
+  assert.deepEqual([await go('RUN-9', 'a pass without reads'), starts()], ['ran', 6]);
+  assert.ok(freshPass(dir, k0).reads, 'the new pass carries its record');
+});
