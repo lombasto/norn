@@ -8,17 +8,16 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { loadRules, effectiveRules, slopCheck, explainOf, replay, budget, budgetLines, PROVE, KIND_PARAMS } from '../engine/lib/slop/check.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
+import { fastRepo } from './helpers/git-fast.mjs';
 import { LINTERS } from '../engine/lib/slop/lang/index.mjs';
 
 const NORN = path.join(import.meta.dirname, '..', 'engine', 'bin', 'norn.mjs');
 const git = (cwd, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8', windowsHide: true }); if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
 const put = (dir, files) => { for (const [f, t] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true }); fs.writeFileSync(path.join(dir, f), t); } };
-/** a repo: main = base files, feat/x = head files */
-function repoOf(base, head) {
+/** a repo: main = base files, feat/x = head files over them; more: commits after those two (by index from 2), at: the branch checked out */
+function repoOf(base, head, more = [], at = 'feat/x') {
   const dir = mkTmp('meta-slop-lint-');
-  git(dir, 'init', '-q', '-b', 'main'); git(dir, 'config', 'user.email', 't@t'); git(dir, 'config', 'user.name', 't'); git(dir, 'config', 'core.autocrlf', 'false');
-  put(dir, base); git(dir, 'add', '-A'); git(dir, 'commit', '-q', '--allow-empty', '-m', 'base');
-  git(dir, 'checkout', '-q', '-b', 'feat/x'); put(dir, head); git(dir, 'add', '-A'); git(dir, 'commit', '-q', '--allow-empty', '-m', 'head');
+  fastRepo(dir, [{ ref: 'main', msg: 'base', files: base }, { ref: 'feat/x', from: 0, msg: 'head', files: head }, ...more], { head: at, autocrlf: false });
   return dir;
 }
 const LJ = loadRules().find(r => r.id === 'LJ');
@@ -80,9 +79,8 @@ test('overrides.json patches LJ\'s levels (merged by sub-rule) and shadow_rules;
 });
 
 test('the replay: per merged branch, the old rule\'s new findings beside its new form\'s, paired by file and line', () => {
-  const repo = repoOf({ 'a.mjs': 'export const a = 1;\n' }, { 'a.mjs': 'export const a = 1;\n' });
-  git(repo, 'checkout', '-q', '-b', 'feat/y', 'main'); put(repo, { 'b.mjs': '// TODO: wire it\nexport const b = 2; // todo list\n' }); git(repo, 'add', '-A'); git(repo, 'commit', '-q', '-m', 'y');
-  git(repo, 'checkout', '-q', 'main'); git(repo, 'merge', '-q', '--no-ff', '-m', 'merge y', 'feat/y');
+  const y = { 'b.mjs': '// TODO: wire it\nexport const b = 2; // todo list\n' };
+  const repo = repoOf({ 'a.mjs': 'export const a = 1;\n' }, { 'a.mjs': 'export const a = 1;\n' }, [{ ref: 'feat/y', from: 0, msg: 'y', files: y }, { ref: 'main', from: 0, merge: [2], msg: 'merge y', files: y }], 'main');
   const old = { id: 'KX', level: 'BLOCK', kind: 'pattern', in: ['comment'], patterns: ['\\bTODO\\b'], files: ['**/*.mjs'], explain: LJ.explain, fixture: LJ.fixture, title: 'x' };
   const tool = recorded({ head: [{ filePath: 'b.mjs', messages: [msg('no-warning-comments', 1, "Unexpected 'todo' comment."), msg('no-warning-comments', 2, "Unexpected 'todo' comment.")] }] });
   const rows = replay({ repo, old: 'KX', as: ['LJ/no-warning-comments'], main: 'main', rules: [old, LJ], tool });
@@ -94,13 +92,12 @@ test('the replay: per merged branch, the old rule\'s new findings beside its new
 
 test('the budget (SPEC 5, PROVE): 1 hit in 50 merges passes BLOCK once rated real, 3 fail it and pass WARN; unrated is n/a, never a pass', () => {
   assert.deepEqual(PROVE, { BLOCK: { merges: 0.02, real: 0.9 }, WARN: { merges: 0.1 } });
-  const repo = repoOf({ 'a.py': 'x = 1\n' }, {});
-  git(repo, 'checkout', '-q', 'main');
   // 52 merges, oldest first: hit hit, 47 clean, hit, clean clean. HEAD's last 50 hold 1 hit; main~2's last 50 hold 3
-  [true, true, ...Array(47).fill(false), true, false, false].forEach((hit, i) => {
-    git(repo, 'checkout', '-q', '-b', `f${i}`, 'main'); put(repo, { [`m${i}.py`]: hit ? '# TODO: later\n' : `y${i} = ${i}\n` });
-    git(repo, 'add', '-A'); git(repo, 'commit', '-q', '-m', `c${i}`); git(repo, 'checkout', '-q', 'main'); git(repo, 'merge', '-q', '--no-ff', '-m', `merge ${i}`, `f${i}`);
+  const merges = [true, true, ...Array(47).fill(false), true, false, false].flatMap((hit, i) => {
+    const files = { [`m${i}.py`]: hit ? '# TODO: later\n' : `y${i} = ${i}\n` }, tip = i ? 2 * i + 1 : 0;   // main's tip: base (0), then merge i-1 (2i+1)
+    return [{ ref: `f${i}`, from: tip, msg: `c${i}`, files }, { ref: 'main', from: tip, merge: [2 * i + 2], msg: `merge ${i}`, files }];
   });
+  const repo = repoOf({ 'a.py': 'x = 1\n' }, {}, merges, 'main');
   const KX = { id: 'KX', level: 'BLOCK', kind: 'pattern', in: ['comment'], patterns: { py: ['\\bTODO\\b'], rs: ['\\bTODO\\b'] }, shadow_langs: ['py', 'rs'], files: ['**/*.py', '**/*.rs'], explain: LJ.explain, fixture: LJ.fixture, title: 'x' };
   const one = replay({ repo, old: 'KX', as: ['KX'], main: 'main', rules: [KX] }), three = replay({ repo, old: 'KX', as: ['KX'], main: 'main~2', rules: [KX] });
   assert.equal(one.length, 50);
