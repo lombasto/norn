@@ -70,9 +70,8 @@ rounds); the scope hook enforces it at each test command and the run-end Done ch
   error, never a guess, and stores nothing. The
   `// reads:` header below stays: it feeds the key and the picks (`--changed`, the PR pick, `norn tests for`). `norn tests index`
   turns the record into read edges too: a non-code file (a prompt, a preset, a schema, a doc) that a stored pass younger than a day
-  read lists that test in impact.json, with its basis (`recorded`, the pass's key and age) that `norn tests for` prints. A lane's
-  pick (`norn tests run --changed`, light and changed) runs those tests when the file changes; the PR job has no machine cache, so
-  its pick keeps to the headers. Code files keep their import edges only. Not recorded: a
+  read lists that test in impact.json, with its basis (`recorded`, the pass's key and age) that `norn tests for` prints;
+  ci-suite's pickTests ranks them with the importers when it is given that impact map. Code files keep their import edges only. Not recorded: a
   child that is not node (git, cargo, norn-code, a browser), a node child started without its parent's env, and a probe that
   reads nothing (`existsSync`, `statSync`).
 - **A test that reads a repo file it does not import declares it.** The cache key holds only the file and the modules it reaches,

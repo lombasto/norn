@@ -11,6 +11,7 @@ import { scanCases, buildIndex, impactOf } from '../engine/lib/testindex.mjs';
 import { repoIndex, depsOf, cacheDirOf } from '../engine/lib/testcache.mjs';
 import { testsPart, tickTests } from '../engine/lib/testscli.mjs';
 import { pickInRepo } from '../engine/lib/testpolicy.mjs';
+import { pickTests } from '../engine/lib/cisuite.mjs';
 
 test.after(cleanTmp);
 const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/(\w:)/, '$1')), '..');
@@ -213,5 +214,5 @@ test('impact: a stored pass whose reads name a doc gives doc -> test (recorded, 
   assert.equal(f.status, 0, f.stderr);
   assert.match(f.stdout, /docs\/p\.md: tests\/one\.test\.mjs\n {2}recorded reads: tests\/one\.test\.mjs \(pass a{12}, 0 min old\)/);
   assert.match(f.stdout, /1 test file\(s\) to run, inferred \+ recorded/);
-  assert.deepEqual(pickInRepo(w.repo, w.state, 'light', ['docs/p.md']).run, ['tests/one.test.mjs'], 'the lane pick reads the edge');
+  assert.deepEqual(pickTests(['docs/p.md'], ['tests/one.test.mjs', 'tests/two.test.mjs'], f => fs.readFileSync(path.join(w.repo, f), 'utf8'), 20, im).run, ['tests/one.test.mjs'], 'the pick reads the edge');
 });
