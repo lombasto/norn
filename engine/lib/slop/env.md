@@ -19,6 +19,7 @@ Norn; renaming them is its own change (every caller, test and doc at once).
 | `META_HB_MS` | `engine/bin/norn.mjs` | the supervisor heartbeat in ms (tests) |
 | `META_NO_TICK` | `engine/bin/norn.mjs` | no tick and no overlap check when a run ends (tests) |
 | `NORN_GIT_PROFILE` | `engine/lib/gitprof.mjs` | a file: every git child of a Norn process (and of its child processes) is counted with its verb, wall time and call site, one JSON line per process appended at exit (profiling; off by default) |
+| `NORN_CENSUS_NODE` | the `ci-suite --census` preload (`engine/lib/cisuite.mjs` CENSUS_PRELOAD) | a file: every node process of a test file appends its pid (the per-file `node_procs`); set by ci-suite per file |
 | `NORN_HOOK_MAX_MS` | `engine/lib/mail.mjs` | the time limit in ms of the `mail check --inject` hook before its watchdog ends it (default 20000; tests) |
 | `NORN_READREC_DIR` | `engine/lib/readrec.mjs` | set by `norn tests run` (testcache.mjs runCached) in a test's env: the folder the read recorder writes its records to; unset, the recorder does nothing |
 | `NORN_READREC_ROOT` | `engine/lib/readrec.mjs` | set with `NORN_READREC_DIR`: the repo root; only reads under it are recorded |
