@@ -134,7 +134,10 @@ export function timeRow(file, wallMs, lines) {
 // Each line costs one stack capture and one append, on a census dispatch only.
 function censusPreload() {
   const fs = require('node:fs'), path = require('node:path'), cp = require('node:child_process'), { isMainThread } = require('node:worker_threads');
-  if (isMainThread && process.env.NORN_CENSUS_NODE) try { fs.appendFileSync(process.env.NORN_CENSUS_NODE, `${process.pid}\n`); } catch {}
+  // its own fs references, taken before any test runs: a test that patches fs (dash-async-census.test.mjs counts sync fs calls per route)
+  // never sees the census's appends
+  const append = fs.appendFileSync, exists = fs.existsSync;
+  if (isMainThread && process.env.NORN_CENSUS_NODE) try { append(process.env.NORN_CENSUS_NODE, `${process.pid}\n`); } catch {}
   const LOG = process.env.NORN_CENSUS_SPAWN;
   if (!LOG) return;
   const WRAP = /\/engine\/lib\/(bounded|dlvgit|gitfacts)\.mjs:/, PRE = /census-preload\.cjs|\(node:|^at node:/;
@@ -160,9 +163,9 @@ function censusPreload() {
   const log = (file, args) => {
     try {
       // exec hands execFile the whole command line as its file (shell: true): its first word is the exe
-      const f0 = String(file), cl = /\s/.test(f0) && !fs.existsSync(f0) ? f0.trim().split(/\s+/) : null;
+      const f0 = String(file), cl = /\s/.test(f0) && !exists(f0) ? f0.trim().split(/\s+/) : null;
       const e0 = cl ? cl[0].replace(/^"|"$/g, '') : f0, a0 = cl ? cl.slice(1) : Array.isArray(args) ? args : [], j =unJg(e0, a0), e = j ? j.exe : e0, a = j ? j.args : a0;
-      fs.appendFileSync(LOG, JSON.stringify({ exe: path.basename(e.split('\\').join('/')), sub: subOf(e, a), site: site(), ...(j ? { jg: true } : {}) }) + '\n');
+      append(LOG, JSON.stringify({ exe: path.basename(e.split('\\').join('/')), sub: subOf(e, a), site: site(), ...(j ? { jg: true } : {}) }) + '\n');
     } catch {}
   };
   for (const name of ['spawn', 'spawnSync', 'execFile', 'execFileSync', 'fork']) {
