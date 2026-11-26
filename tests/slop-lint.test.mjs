@@ -40,7 +40,7 @@ test('LJ: both sides lint with the merge base\'s config; a branch that edits it 
   const repo = repoOf({ 'eslint.config.mjs': baseCfg, 'a.mjs': 'export const a = 1;\n', 'c.mjs': 'export const c = 1;\n' }, { 'eslint.config.mjs': headCfg, 'a.mjs': 'export const a = 2;\n', 'c.mjs': 'export const c = 2;\n' });
   const o = {}, r = slopCheck({ repo, base: 'main', rules: [LJ], tool: recorded({ head: [{ filePath: 'a.mjs', messages: [msg('no-undef', 1, "'x' is not defined.")] }] }, o) });
   assert.deepEqual(o.runs.map(x => [x.side, x.run.config]), [['head', baseCfg], ['base', baseCfg]], 'the base config, for both sides');
-  assert.deepEqual(o.runs.map(x => [x.side, x.files]), [['head', ['a.mjs', 'c.mjs']], ['base', ['a.mjs']]], 'the base side lints only the files with a head finding');
+  assert.deepEqual(o.runs.map(x => [x.side, x.files]), [['head', ['a.mjs', 'c.mjs', 'eslint.config.mjs']], ['base', ['a.mjs']]], 'the base side lints only the files with a head finding');
   assert.deepEqual(r.blocks.map(b => [b.rule, b.file, b.level]), [['LJ/config-changed', 'eslint.config.mjs', 'BLOCK']]);
   const plain = repoOf({ 'a.mjs': 'export const a = 1;\n' }, { 'a.mjs': 'export const a = 2;\n' }), o2 = {};
   assert.deepEqual(slopCheck({ repo: plain, base: 'main', rules: [LJ], tool: recorded({}, o2) }).blocks, []);
