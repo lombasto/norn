@@ -202,7 +202,11 @@ test('ci-suite --census: git_procs (GIT_TRACE2_EVENT, a file per git process) an
     "test('census spawns: a jobguard command line', () => { spawnSync('no-such-jobguard', ['run', '1000', '-', '\"git\" rev-parse HEAD']); });\n");
   fs.mkdirSync(path.join(fx, 'engine', 'lib'), { recursive: true });
   fs.writeFileSync(path.join(fx, 'engine', 'lib', 'probe.mjs'), "import { spawnSync } from 'node:child_process';\nexport const probe = () => spawnSync('git', ['--version']).status;\n");
-  const r = spawnSync(process.execPath, [CI, '--json', out, '--census', `${fx.split('\\').join('/')}/*.test.mjs`], { cwd: REPO, encoding: 'utf8', windowsHide: true, env: suiteEnv(process.env) });
+  // the inner suite runs without an outer harness's --import (`norn tests run` adds its read recorder, testcache.mjs withRecorder):
+  // censusEnv keeps the caller's NODE_OPTIONS, and any --import sends `node chk.txt` through the ESM loader (the CI 45728652472 red)
+  const env = suiteEnv(process.env), opts = String(env.NODE_OPTIONS ?? '').replace(/\s*--import[= ]\S+/g, '').trim();
+  if (opts) env.NODE_OPTIONS = opts; else delete env.NODE_OPTIONS;
+  const r = spawnSync(process.execPath, [CI, '--json', out, '--census', `${fx.split('\\').join('/')}/*.test.mjs`], { cwd: REPO, encoding: 'utf8', windowsHide: true, env });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const j = JSON.parse(fs.readFileSync(out, 'utf8')), [plain, spawns] = j.files;
   assert.equal(j.census, true);
