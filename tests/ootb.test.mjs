@@ -148,7 +148,7 @@ test("F-5: norn <cmd> --help prints that command's usage, exit 0; norn help <cmd
   const js = `import { main } from ${JSON.stringify(pathToFileURL(META).href)};
 const all = {}; for (const c of JSON.parse(process.argv[1])) { let o = '', e = ''; const code = main(['help', c], process.env, s => { o += s + '\\n'; }, s => { e += s + '\\n'; }); all[c] = { code, out: o, err: e }; }
 process.stdout.write(JSON.stringify(all));`;
-  const hr = spawnSync(process.execPath, ['--input-type=module', '-e', js, JSON.stringify(COMMANDS)], { env: sb.env, encoding: 'utf8', timeout: 60000 });
+  const hr = spawnSync(process.execPath, ['--input-type=module', '-e', js, JSON.stringify(COMMANDS)], { env: sb.env, encoding: 'utf8', timeout: 60000, windowsHide: true });
   assert.equal(hr.status, 0, hr.stderr);
   const helps = JSON.parse(hr.stdout);
   for (const c of COMMANDS) {
