@@ -242,4 +242,3 @@ test('checkBranch: the rules of the project folder join the check; K22 passes a 
   const s = checkBranch({ repo, state, rules: effectiveRules().filter(x => x.id === 'K22'), tool: () => null });
   assert.deepEqual(s.result.blocks.map(b => [b.line, b.msg.split(': ').pop()]), [[2, `${two} is dropped`]], `${one} resolves open from the state`);
 });
-// scratch: NORN-CI-TESTS-PARTS proof run, dropped before merge
