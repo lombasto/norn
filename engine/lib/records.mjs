@@ -2,6 +2,7 @@
 // records.jsonl holds question / decision / directive / lane; runs.jsonl holds run (D3). Node built-ins only.
 import fs from 'node:fs';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import os from 'node:os';
 import path from 'node:path';
 import { readText, readTextA, readdirS, readdirA, readJsonS, snap, newSnap, prime, forget } from './fsnap.mjs';
 import { writeViews, writeViewsAsync } from './views.mjs';
@@ -10,6 +11,7 @@ import { isAncestor } from './dlvgit.mjs';
 import { ownerPickGuard, carriesOwnerPick, ownerWordsOf, choiceKeyOf } from './qreconcile.mjs';
 import { ownerOnlyRefusal, OWNER_ONLY_EXIT } from './checkinguards.mjs';
 import { checkinBelow } from './floor.mjs';
+import { running } from './procs.mjs';
 
 // worker (META-GTP-MAIL): a supervised run speaking for itself (META_RUN_ID) - only mail events allow it; tick (lifecycle.mjs): the
 // tick archiving a lane by its rules - only the lane archive allows it
@@ -462,19 +464,29 @@ export async function loadStateAsync(stateDir) {
   return joinFolds(fold(qa), withNames(fold(ru), crewNames(cw)));
 }
 
-// ---------- lock (exclusive create, retry 25 ms, stale after 10 s) ----------
+// ---------- lock (exclusive create, retry 25 ms, stale after 10 s or at once when its holder pid on this host is gone) ----------
 const sleepMs = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+// NORN-LOCK-DEAD-PID: the record names its holder on this machine (host, pid, the holder's start ms); a waiter breaks it at once when
+// the host is ours and that pid runs no more (a dashboard restart left home.lock: every publish stalled 2 min on the age rule). A running
+// pid - even a reused one - waits for staleMs as before, so a live holder's lock is never broken early; another host / no pid: age only.
+const lockStart = Math.round(Date.now() - process.uptime() * 1000);
+const lockRecord = () => JSON.stringify({ pid: process.pid, ts: new Date().toISOString(), host: os.hostname(), start: lockStart });
+const lockBreakable = (text, staleMs) => {
+  let r; try { r = JSON.parse(text); } catch { return false; }   // being written / removed
+  if (r?.host === os.hostname() && Number.isInteger(r.pid) && r.pid > 0 && !running(r.pid)) return true;
+  const ts = Date.parse(r?.ts); return Number.isFinite(ts) && Date.now() - ts > staleMs;
+};
 export function withLock(lockFile, fn, { retryMs = 25, staleMs = 10000, timeoutMs = 60000 } = {}) {
   const t0 = Date.now();
   for (;;) {
     try {
-      fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, ts: new Date().toISOString() }), { flag: 'wx' });
+      fs.writeFileSync(lockFile, lockRecord(), { flag: 'wx' });
       break;
     } catch (e) {
       if (e.code !== 'EEXIST' && e.code !== 'EPERM' && e.code !== 'EACCES') throw e;
-      let ts = null;
-      try { ts = Date.parse(JSON.parse(fs.readFileSync(lockFile, 'utf8')).ts); } catch { /* being written / removed */ }
-      if (ts !== null && Date.now() - ts > staleMs) { try { fs.unlinkSync(lockFile); } catch { /* someone else broke it */ } continue; }
+      let text = null;
+      try { text = fs.readFileSync(lockFile, 'utf8'); } catch { /* being written / removed */ }
+      if (text !== null && lockBreakable(text, staleMs)) { try { fs.unlinkSync(lockFile); } catch { /* someone else broke it */ } continue; }
       if (Date.now() - t0 > timeoutMs) throw new RecordError(`lock busy: ${lockFile} (held > ${timeoutMs} ms)`, 1);
       sleepMs(retryMs);
     }
@@ -486,12 +498,12 @@ export function withLock(lockFile, fn, { retryMs = 25, staleMs = 10000, timeoutM
 export async function withLockAsync(lockFile, fn, { retryMs = 25, staleMs = 10000, timeoutMs = 60000 } = {}) {
   const t0 = Date.now(), fp = fs.promises;
   for (;;) {
-    try { await fp.writeFile(lockFile, JSON.stringify({ pid: process.pid, ts: new Date().toISOString() }), { flag: 'wx' }); break; }
+    try { await fp.writeFile(lockFile, lockRecord(), { flag: 'wx' }); break; }
     catch (e) {
       if (e.code !== 'EEXIST' && e.code !== 'EPERM' && e.code !== 'EACCES') throw e;
-      let ts = null;
-      try { ts = Date.parse(JSON.parse(await fp.readFile(lockFile, 'utf8')).ts); } catch { /* being written / removed */ }
-      if (ts !== null && Date.now() - ts > staleMs) { try { await fp.unlink(lockFile); } catch { /* someone else broke it */ } continue; }
+      let text = null;
+      try { text = await fp.readFile(lockFile, 'utf8'); } catch { /* being written / removed */ }
+      if (text !== null && lockBreakable(text, staleMs)) { try { await fp.unlink(lockFile); } catch { /* someone else broke it */ } continue; }
       if (Date.now() - t0 > timeoutMs) throw new RecordError(`lock busy: ${lockFile} (held > ${timeoutMs} ms)`, 1);
       await new Promise(r => setTimeout(r, retryMs));
     }
