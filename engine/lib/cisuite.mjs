@@ -121,19 +121,19 @@ export function timeRow(file, wallMs, lines) {
   return { file, wall_ms: wall, cases_ms: cases, outside_ms: wall - cases, cases: tops.length };
 }
 // `ci-suite --census`: a `--require` preload (census-preload.cjs, written into the suite's temp dir) appends one line per node process
-// (main thread) to the file CI_SUITE_CENSUS_NODE names; git writes one trace2 event file per process into the GIT_TRACE2_EVENT directory
+// (main thread) to the file NORN_CENSUS_NODE names; git writes one trace2 event file per process into the GIT_TRACE2_EVENT directory
 // (git-config(1) trace2.eventTarget: a directory target). A CommonJS --require, not an --import: any --import makes node load the
 // entry through the ESM loader, so `node chk.txt` (slop-fix.test.mjs's Done check) failed with ERR_UNKNOWN_FILE_EXTENSION under the
 // census (CI 45728652472). The env a file's `node --test` gets for it: the caller's NODE_OPTIONS kept, a census preload of an outer
 // suite (a ci-suite test running ci-suite --census) replaced, so each process lands in the innermost census only.
 export const CENSUS_PRELOAD = "const fs = require('node:fs'), { isMainThread } = require('node:worker_threads');\n" +
-  "if (isMainThread && process.env.CI_SUITE_CENSUS_NODE) try { fs.appendFileSync(process.env.CI_SUITE_CENSUS_NODE, `${process.pid}\\n`); } catch {}\n";
+  "if (isMainThread && process.env.NORN_CENSUS_NODE) try { fs.appendFileSync(process.env.NORN_CENSUS_NODE, `${process.pid}\\n`); } catch {}\n";
 /** (env, the preload's path, the file's census dir) -> the env entries a census run sets */
-export const censusEnv = (env, preload, dir) => ({ GIT_TRACE2_EVENT: path.join(dir, 'trace2'), CI_SUITE_CENSUS_NODE: path.join(dir, 'node.txt'),
+export const censusEnv = (env, preload, dir) => ({ GIT_TRACE2_EVENT: path.join(dir, 'trace2'), NORN_CENSUS_NODE: path.join(dir, 'node.txt'),
   NODE_OPTIONS: [String(env.NODE_OPTIONS ?? '').replace(/\s*--require="[^"]*census-preload\.cjs"/g, '').trim(), `--require="${preload}"`].filter(Boolean).join(' ') });
 /** the census dir -> { git_procs, node_procs } */
 export const censusCount = dir => {
-  const ls = d => { try { return fs.readdirSync(d); } catch { return []; } };
-  let node = 0; try { node = fs.readFileSync(path.join(dir, 'node.txt'), 'utf8').split('\n').filter(Boolean).length; } catch {}
-  return { git_procs: ls(path.join(dir, 'trace2')).length, node_procs: node };
+  // no trace2 dir / no node.txt: that file started no git / no node process (the preload creates node.txt on its first append)
+  const t2 = path.join(dir, 'trace2'), nf = path.join(dir, 'node.txt');
+  return { git_procs: fs.existsSync(t2) ? fs.readdirSync(t2).length : 0, node_procs: fs.existsSync(nf) ? fs.readFileSync(nf, 'utf8').split('\n').filter(Boolean).length : 0 };
 };
