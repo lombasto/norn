@@ -93,12 +93,13 @@ jobs:
               ls -l "$dir/$h"
             done
           done
+      # RM-26 S5: the parallel phase at concurrency 4, as pr.yml (it is throughput-bound); smoke still runs alone after it (DEC-78)
       - name: suite (fails only on a red not in tests/KNOWN-REDS.txt)
         if: ${{ !matrix.code_rs_only }}
         shell: bash
         env:
           CENSUS: ${{ github.event_name == 'workflow_dispatch' && inputs.census && '--census' || '' }}
-        run: node engine/bin/ci-suite.mjs --json "$RUNNER_TEMP/ci-times.json" $CENSUS
+        run: node engine/bin/ci-suite.mjs --concurrency 4 --json "$RUNNER_TEMP/ci-times.json" $CENSUS
       # RM-26 S0: one time row per test file (wall_ms, cases_ms, outside_ms, cases; with the census git_procs, node_procs)
       - name: upload the per-file times
         if: ${{ always() && !matrix.code_rs_only }}

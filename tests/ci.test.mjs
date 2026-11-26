@@ -59,7 +59,7 @@ test('ci.yml: push to main + nightly + dispatch, never a pull request; the full 
   assert.ok(on.some(l => l.trim() === 'branches: [main]') && on.some(l => l.trim() === "- cron: '0 6 * * *'"));
   assert.doesNotMatch(t, /^\s*(pull_request|pull_request_target):/m);
   const jobs = common(t, 'ci', ["group: ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}", 'cancel-in-progress: false']);
-  const at = jobs.indexOf('run: node engine/bin/ci-suite.mjs --json "$RUNNER_TEMP/ci-times.json" $CENSUS');
+  const at = jobs.indexOf('run: node engine/bin/ci-suite.mjs --concurrency 4 --json "$RUNNER_TEMP/ci-times.json" $CENSUS');
   assert.ok(at > 0 && jobs[at - 1] === "CENSUS: ${{ github.event_name == 'workflow_dispatch' && inputs.census && '--census' || '' }}", 'the census only on a dispatch asking for it');
   const up = jobs.indexOf('- name: upload the per-file times');
   assert.deepEqual(jobs.slice(up + 1, up + 6), ['if: ${{ always() && !matrix.code_rs_only }}', 'uses: actions/upload-artifact@v4', 'with:',
