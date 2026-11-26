@@ -22,7 +22,6 @@ import { guardRows } from '../engine/lib/guard.mjs';
 import { waitFor } from './helpers/wait.mjs';
 import { settled } from './helpers/settled.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
-import { fastRepo } from './helpers/git-fast.mjs';
 import { rustReady } from './helpers/rust.mjs';
 
 const NORN = path.join(import.meta.dirname, '..', 'engine', 'bin', 'norn.mjs');
@@ -33,7 +32,8 @@ const commit = (dir, files, msg) => { put(dir, files); git(dir, 'add', '-A'); gi
 /** a repo on main with base files; returns its folder */
 function repoWith(base = { 'a.txt': 'a\n' }) {
   const dir = mkTmp('meta-slopgate-');
-  fastRepo(dir, [{ ref: 'main', msg: 'base', files: base }], { autocrlf: false });
+  git(dir, 'init', '-q', '-b', 'main'); git(dir, 'config', 'user.email', 't@t'); git(dir, 'config', 'user.name', 't'); git(dir, 'config', 'core.autocrlf', 'false');
+  commit(dir, base, 'base');
   return dir;
 }
 // K14 has nothing to say in these repos; ESLint and ast-grep find nothing (an empty JSON list), the secrets scan nothing (an empty SARIF 2.1.0 log)
@@ -94,7 +94,8 @@ function projectFile(root, repo) {
 test('D1 merge-brief: refuses an unchecked head that has a BLOCK finding (it runs the check); accepts the checked-clean head', () => {
   const root = mkTmp('meta-slopgate-mb-'), repo = path.join(root, 'repo'), wt = path.join(root, 'wt'), state = path.join(root, 'state', 'kestrel');
   fs.mkdirSync(repo);
-  fastRepo(repo, [{ ref: 'main', msg: 'a', files: { 'a.txt': 'a\n' } }]);
+  git(repo, 'init', '-q', '-b', 'main'); git(repo, 'config', 'user.email', 't@t'); git(repo, 'config', 'user.name', 't');
+  commit(repo, { 'a.txt': 'a\n' }, 'a');
   git(repo, 'worktree', 'add', '-q', '-b', 'feat/x', wt);
   const bad = commit(wt, { 'a.txt.orig': 'left by a merge\n' }, 'oops');
   const pf = projectFile(root, repo);
@@ -149,7 +150,8 @@ test('D1 run end: a lane run that ends STOPPED with commits is checked and its c
   const state = mkTmp('meta-slopgate-run-'), root = path.dirname(path.dirname(state));
   const repo = path.join(root, 'repo'), wt = path.join(root, 'wt'), notes = path.join(root, 'NOTES.md'), brief = path.join(root, 'brief.md');
   fs.mkdirSync(repo);
-  fastRepo(repo, [{ ref: 'main', msg: 'a', files: { 'a.txt': 'a\n' } }]);
+  git(repo, 'init', '-q', '-b', 'main'); git(repo, 'config', 'user.email', 't@t'); git(repo, 'config', 'user.name', 't');
+  commit(repo, { 'a.txt': 'a\n' }, 'a');
   git(repo, 'worktree', 'add', '-q', '-b', 'feat/x', wt);
   const head = commit(wt, { 'a.txt.orig': 'left by a merge\n' }, 'oops');
   fs.writeFileSync(brief, 'mode: stopped\n');
@@ -169,7 +171,8 @@ test('D1 run end: a red Done check and a BLOCK go back as ONE resume carrying bo
   const state = mkTmp('meta-slopgate-dod-'), root = path.dirname(path.dirname(state));
   const repo = path.join(root, 'repo'), wt = path.join(root, 'wt'), notes = path.join(root, 'NOTES.md'), brief = path.join(root, 'brief.md');
   fs.mkdirSync(repo);
-  fastRepo(repo, [{ ref: 'main', msg: 'a', files: { 'a.txt': 'a\n' } }]);
+  git(repo, 'init', '-q', '-b', 'main'); git(repo, 'config', 'user.email', 't@t'); git(repo, 'config', 'user.name', 't');
+  commit(repo, { 'a.txt': 'a\n' }, 'a');
   git(repo, 'worktree', 'add', '-q', '-b', 'feat/x', wt);
   commit(wt, { 'a.txt.orig': 'left by a merge\n' }, 'oops');
   fs.writeFileSync(path.join(wt, 'dirty.txt'), 'uncommitted\n');   // the Done check's red: an untracked file
@@ -302,7 +305,8 @@ test('F4 + F5 at the CLI: a broken tool is a BLOCK "could not run" (exit 1); a -
 test('F5: a check with a broken tool holds the merge at all three doors (merge-brief, the merge queue, merge-land)', () => {
   const root = brokenRoot(), repo = path.join(root, 'repo'), wt = path.join(root, 'wt');
   fs.mkdirSync(repo);
-  fastRepo(repo, [{ ref: 'main', msg: 'a', files: { 'a.txt': 'a\n' } }]);
+  git(repo, 'init', '-q', '-b', 'main'); git(repo, 'config', 'user.email', 't@t'); git(repo, 'config', 'user.name', 't');
+  commit(repo, { 'a.txt': 'a\n' }, 'a');
   git(repo, 'worktree', 'add', '-q', '-b', 'feat/x', wt);
   const head = commit(wt, { 'b.mjs': 'export const b = 1;\n' }, 'js');
   const r = spawnSync(process.execPath, [NORN, 'merge-brief', '--project', projectFile(root, repo), '--lane', 'x', '--branch', 'feat/x', '--worktree', wt, '--notes', path.join(root, 'N.md'),
@@ -323,7 +327,8 @@ test('F7: a run-end check that throws stores a "could not check" hold for the br
   const repo = path.join(root, 'repo'), wt = path.join(root, 'wt'), notes = path.join(root, 'NOTES.md'), brief = path.join(root, 'brief.md'), pdir = path.join(root, 'proj');
   fs.mkdirSync(repo); fs.mkdirSync(path.join(pdir, 'rules', 'slop'), { recursive: true });
   fs.writeFileSync(path.join(pdir, 'rules', 'slop', 'overrides.json'), '{ not json');   // the rule set cannot load: the check throws
-  fastRepo(repo, [{ ref: 'main', msg: 'a', files: { 'a.txt': 'a\n' } }]);
+  git(repo, 'init', '-q', '-b', 'main'); git(repo, 'config', 'user.email', 't@t'); git(repo, 'config', 'user.name', 't');
+  commit(repo, { 'a.txt': 'a\n' }, 'a');
   git(repo, 'worktree', 'add', '-q', '-b', 'feat/x', wt);
   const head = commit(wt, { 'ok.txt': 'fine\n' }, 'ok');
   fs.writeFileSync(brief, 'mode: stopped\n');
