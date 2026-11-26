@@ -186,3 +186,32 @@ test('impact: a non-code file a // reads: header matches names its declaring tes
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /\.github\/workflows\/pr\.yml: tests\/ci\.test\.mjs tests\/lint\.test\.mjs/);
 });
+
+// NORN-IMPACT-READS: a fresh stored pass's recorded reads are read edges from the non-code files it read to its test - `norn tests for`
+// names the test with its basis (recorded, the pass's key and age); a stale pass or one of a gone test gives none; code files keep their
+// static edges and uncovered stays the deps'
+test('impact: a stored pass whose reads name a doc gives doc -> test (recorded, with basis); stale / gone-test records give none; code untouched', () => {
+  const w = world(), put = (f, t) => fs.writeFileSync(path.join(w.repo, f), t);
+  fs.mkdirSync(path.join(w.repo, 'docs')); put('docs/p.md', '# p\n'); put('docs/q.md', '# q\n');
+  assert.equal(w.norn('index').status, 0);
+  const before = w.read('impact.json');
+  const cache = cacheDirOf(w.state), res = (k, r) => fs.writeFileSync(path.join(cache, `${k.repeat(40)}.json`), JSON.stringify({ ok: true, ms: 5, run: 'RUN-1', counts: {}, cases: [], ...r }));
+  fs.mkdirSync(cache, { recursive: true });
+  const now = new Date().toISOString(), files = { 'docs/p.md': 'h', 'engine/d.mjs': 'h', 'tests/fixtures/fx/data.txt': 'h' };
+  res('a', { at: now, file: 'tests/one.test.mjs', reads: { files, dirs: {} } });
+  res('b', { at: new Date(Date.now() - 25 * 3600e3).toISOString(), file: 'tests/two.test.mjs', reads: { files: { 'docs/q.md': 'h' }, dirs: {} } });
+  res('c', { at: now, file: 'tests/gone.test.mjs', reads: { files: { 'docs/q.md': 'h' }, dirs: {} } });
+  const r = w.norn('index');
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /1 non-code files with recorded readers/);
+  const im = w.read('impact.json');
+  assert.deepEqual(im.sources['docs/p.md'], ['tests/one.test.mjs']);
+  assert.deepEqual(im.recorded, { 'docs/p.md': { 'tests/one.test.mjs': { basis: 'recorded', key: 'a'.repeat(40), at: now } } });
+  assert.ok(!('docs/q.md' in im.sources), 'a stale pass and a gone test give no edge');
+  assert.deepEqual([im.sources, im.uncovered], [{ ...before.sources, 'docs/p.md': ['tests/one.test.mjs'] }, before.uncovered], 'code edges and uncovered: unchanged (engine/d.mjs stays uncovered)');
+  const f = w.norn('for', 'docs/p.md');
+  assert.equal(f.status, 0, f.stderr);
+  assert.match(f.stdout, /docs\/p\.md: tests\/one\.test\.mjs\n {2}recorded reads: tests\/one\.test\.mjs \(pass a{12}, 0 min old\)/);
+  assert.match(f.stdout, /1 test file\(s\) to run, inferred \+ recorded/);
+  assert.deepEqual(pickInRepo(w.repo, w.state, 'light', ['docs/p.md']).run, ['tests/one.test.mjs'], 'the lane pick reads the edge');
+});

@@ -152,3 +152,14 @@ test('pickRun: a test whose // reads: header matches a changed file runs (light:
   assert.deepEqual(pickRun({ mode: 'light', changed: ['engine/lib/alpha.mjs'], tests, read }).run, ['tests/alpha.test.mjs', 'tests/lint.test.mjs'], 'the per pick and every header that matches');
   assert.deepEqual(pickRun({ mode: 'changed', changed: ['.github/workflows/pr.yml'], tests, read }), { run: ['tests/ci.test.mjs', 'tests/lint.test.mjs'], none: [], left: [] });
 });
+
+// NORN-IMPACT-READS: a test a fresh stored pass recorded reading a changed doc (impact.json recorded) is picked in light mode, and in
+// changed mode it ranks with the importers under the cap of 20
+test('pickRun: impact.json recorded readers of a changed doc run (light: all; changed: under the importers cap)', () => {
+  const tests = Array.from({ length: 22 }, (_, i) => `tests/r${String(i).padStart(2, '0')}.test.mjs`), read = () => "import test from 'node:test';\n";
+  const impact = { sources: {}, recorded: { 'docs/p.md': Object.fromEntries(tests.map(t => [t, { basis: 'recorded', key: 'k', at: 'now' }])) } };
+  assert.deepEqual(pickRun({ mode: 'light', changed: ['docs/p.md'], tests, read, impact }).run, tests);
+  assert.deepEqual(pickRun({ mode: 'light', changed: ['docs/p.md'], tests, read }).run, [], 'no impact map: no recorded pick');
+  const ch = pickRun({ mode: 'changed', changed: ['docs/p.md'], tests, read, impact });
+  assert.deepEqual([ch.run.length, ch.left], [20, ['tests/r20.test.mjs', 'tests/r21.test.mjs']]);
+});

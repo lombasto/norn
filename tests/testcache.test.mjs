@@ -237,3 +237,19 @@ test('runCached stores no result when the listing fails: the Error passes throug
   await assert.rejects(runCached('tests/a.test.mjs', { ix: repoIndex(w.root, { git: gitFake(99).git }), dir: w.dir, run: 'RUN-1', pollMs: 100 }), /git ls-files/);
   assert.deepEqual(fs.readdirSync(w.dir).filter(n => n.endsWith('.json') || n.endsWith('.lock')), [], 'no result, no lock left');
 });
+
+// NORN-IMPACT-READS: recordedReads - per test file its newest fresh stored pass with a record; a stale pass, a fail and a pass of a test
+// not in the list give nothing; a recorded <missing> path is no read
+test('recordedReads: the newest fresh pass per listed test file; stale, failed and gone-test passes are left out', async () => {
+  const { recordedReads, RESULT_TTL_MS } = await import('../engine/lib/testcache.mjs');
+  const dir = mkTmp('meta-tc-rec-'), now = Date.parse('2026-11-26T12:00:00Z'), at = ms => new Date(now - ms).toISOString();
+  const put = (k, r) => fs.writeFileSync(path.join(dir, `${k.repeat(40)}.json`), JSON.stringify(r));
+  put('a', { ok: true, at: at(3600e3), file: 'tests/a.test.mjs', reads: { files: { 'docs/old.md': 'h' }, dirs: {} } });
+  put('b', { ok: true, at: at(60e3), file: 'tests/a.test.mjs', reads: { files: { 'docs/p.md': 'h', 'docs/gone.md': '<missing>' }, dirs: {} } });
+  put('c', { ok: true, at: at(RESULT_TTL_MS + 1), file: 'tests/b.test.mjs', reads: { files: { 'docs/p.md': 'h' }, dirs: {} } });
+  put('d', { ok: false, at: at(60e3), file: 'tests/c.test.mjs', reads: { files: { 'docs/p.md': 'h' }, dirs: {} } });
+  put('e', { ok: true, at: at(60e3), file: 'tests/gone.test.mjs', reads: { files: { 'docs/p.md': 'h' }, dirs: {} } });
+  put('f', { ok: true, at: at(60e3), file: 'tests/d.test.mjs' });
+  assert.deepEqual(recordedReads(dir, ['tests/a.test.mjs', 'tests/b.test.mjs', 'tests/c.test.mjs', 'tests/d.test.mjs'], now), { 'tests/a.test.mjs': { key: 'b'.repeat(40), at: at(60e3), files: ['docs/p.md'] } });
+  assert.deepEqual(recordedReads(path.join(dir, 'none'), ['tests/a.test.mjs'], now), {}, 'no cache folder: nothing');
+});
