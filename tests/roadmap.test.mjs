@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { record, loadState, readEvents, recordsFile, fold, RecordError } from '../engine/lib/records.mjs';
 import { loadRoadmap, foldRoadmap, childrenOf, derive, worldOf, detect, unplacedOf, goneLinks, buildTree, renderTree, renderRoadmapView,
-  ROADMAP_HEADER, writeRoadmapView, checkLinks, RoadmapError, linkForm } from '../engine/lib/roadmap.mjs';
+  ROADMAP_HEADER, writeRoadmapView, checkLinks, RoadmapError, linkForm, world } from '../engine/lib/roadmap.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 import { makeGit } from '../engine/lib/dlvgit.mjs';
 
@@ -335,6 +335,51 @@ test('C8: a deliverables view that fails is that error, never "every dlv: link i
   const real = makeGit(), broken = (r, args, o) => { if (args[0] === 'cherry') throw new Error('git cherry: boom'); return real(r, args, o); };
   assert.throws(() => checkLinks(s, [`dlv:${id}`], { git: broken }), e => !(e instanceof RoadmapError) && /git cherry: boom/.test(e.message));
   checkLinks(s, [`dlv:${id}`]);   // the same link with a working git: valid
+});
+
+// RM-26 S6B-2: a fixture repo (main + an off-main branch + 1200 blobs: two share a 4-hex prefix) and today's per-link answer as the oracle
+const shaRepo = () => {
+  const repo = mkTmp('meta-road-sha-'), g = (...a) => spawnSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { encoding: 'utf8', windowsHide: true, input: a.at(-1) === '--stdin-paths' ? g.paths : undefined }).stdout.trim();
+  g('init', '-q', '-b', 'main');
+  for (let i = 0; i < 6; i++) { fs.writeFileSync(path.join(repo, 'f.txt'), `${i}\n`); g('add', '-A'); g('commit', '-qm', `c${i}`); }
+  const on = g('rev-list', 'main').split('\n'), tree = g('rev-parse', 'main^{tree}');
+  g('checkout', '-q', '-b', 'feat/off'); fs.writeFileSync(path.join(repo, 'f.txt'), 'off\n'); g('commit', '-qam', 'off'); const off = g('rev-parse', 'HEAD'); g('checkout', '-q', 'main');
+  const bd = mkTmp('meta-road-blobs-'); g.paths = Array.from({ length: 1200 }, (_, i) => { const f = path.join(bd, `b${i}`); fs.writeFileSync(f, `blob ${i}\n`); return f; }).join('\n') + '\n';
+  const blobs = g('hash-object', '-w', '--stdin-paths').split('\n'), amb = blobs.map(b => b.slice(0, 4)).find((p, i, a) => a.indexOf(p) !== i);
+  const today = x => { const full = g('rev-parse', '--verify', '--quiet', x + '^{commit}'); return !full ? null : spawnSync('git', ['-C', repo, 'merge-base', '--is-ancestor', full, 'main'], { windowsHide: true }).status === 0; };
+  return { repo, on, off, tree, amb, today, project: { root: repo, deliverables: { repo, target: 'main' } } };
+};
+
+test('S6B-2 sha links: N links answer in 2 git cold (one cat-file, one rev-list), 0 warm (the sha memo); every kind of id answers as today', () => {
+  const R = shaRepo(), s = seedState();
+  assert.ok(R.amb, 'the fixture has an ambiguous prefix');
+  const stored = [...R.on, R.off, R.on[2].slice(0, 7), 'f'.repeat(40)];
+  rec(s, 'link', { links: stored.map(x => 'sha:' + x) }, 'RM-2');
+  let git = makeGit(), W = world({ stateDir: s, project: R.project, git });
+  assert.deepEqual(stored.map(x => W.sha(x)), stored.map(R.today));
+  assert.deepEqual([W.sha(R.on[0]), W.sha(R.off), W.sha(R.on[2].slice(0, 7)), W.sha('f'.repeat(40))], [true, false, true, null]);
+  assert.equal(git.calls, 2, 'every stored link in one batch');
+  const odd = [R.amb, R.tree, R.off.slice(0, 9), 'main', 'feat/off', 'fff9999', '', 'a b'];
+  assert.deepEqual(odd.map(x => W.sha(x)), odd.map(R.today), 'ambiguous, non-commit, short, a ref name, missing: as today');
+  assert.equal(W.sha(R.amb), null);
+  git = makeGit(); W = world({ stateDir: s, project: R.project, git });
+  assert.deepEqual(R.on.map(x => W.sha(x)), R.on.map(() => true));
+  assert.equal(git.calls, 1, 'warm: the memo answers every full id on main; the rest (short, off main, missing) is one cat-file');
+  const s2 = seedState(); rec(s2, 'link', { links: R.on.map(x => 'sha:' + x) }, 'RM-2');
+  git = makeGit(); W = world({ stateDir: s2, project: R.project, git });
+  assert.deepEqual(R.on.map(x => W.sha(x)), R.on.map(() => true));
+  assert.equal(git.calls, 0, 'warm, every link a full id on main: no git');
+});
+
+test('S6B-2 checkLinks: a sha link being added goes into the first batch (a real commit: valid; a missing one: refused as today)', () => {
+  const R = shaRepo(), s = seedState();
+  rec(s, 'link', { links: ['sha:' + R.on[1]] }, 'RM-2');
+  const git = makeGit();
+  assert.deepEqual(checkLinks(s, ['sha:' + R.off], { project: R.project, git }), ['sha:' + R.off]);
+  assert.equal(git.calls, 2, 'the stored link and the new one: one cat-file, one rev-list');
+  assert.deepEqual(checkLinks(s, ['sha:' + R.on[4].slice(0, 8)], { project: R.project }), ['sha:' + R.on[4].slice(0, 8)]);
+  assert.throws(() => checkLinks(s, ['sha:' + 'e'.repeat(40)], { project: R.project }), e => e instanceof RoadmapError && /link to something that does not exist: sha:e{40}$/.test(e.message));
+  assert.throws(() => checkLinks(s, ['sha:' + R.tree], { project: R.project }), e => e instanceof RoadmapError && /does not exist: sha:/.test(e.message), 'a tree is no commit');
 });
 
 // ---------- piece 5: norn road (SPEC sec. 3) ----------

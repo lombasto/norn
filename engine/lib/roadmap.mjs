@@ -9,6 +9,7 @@ import { record, readEvents, recordsFile, loadState, loadShared, homeOf, laneIdI
 import { deliverablesView, deliverableConfig, lastInstall, mergeTimes } from './deliverables.mjs';
 import { scanRepo, makeGit } from './dlvgit.mjs';
 import { landedOf } from './dlvmerge.mjs';
+import { gitDirs, refSha, memo } from './gitfacts.mjs';
 import { writeGuarded, writeGuardedAsync } from './views.mjs';
 import { stuckOf, stuckPolicy, mergesOf, stuckWords } from './stuck.mjs';
 
@@ -282,28 +283,67 @@ export const dlvCopyRow = it => { const l = landedOf(it); return { id: it.id, ho
   ...(it.state === 'superseded' ? { superseded: true } : {}), repo: it.data.repo ?? null, branch: it.data.branch ?? null, lane: it.data.lane ?? null, run: it.data.run ?? null,
   delivers: it.data.delivers ?? '', done_utc: it.data.done_utc ?? it.created, merges: mergeTimes(it) }; };
 /** worldOf() filled from the state dir, the deliverables view and git (the engine's scanRepo; branch / sha facts asked lazily) */
-export function world({ stateDir, project = {}, now = Date.now(), git = makeGit(), idle } = {}) {
+export function world({ stateDir, project = {}, now = Date.now(), git = makeGit(), idle, shaLinks = [] } = {}) {
   project = project || {};
   const st = loadState(stateDir), away = copyItems(stateDir, 'run');   // RM-46 S3: + the other homes' runs and DLVs (read-only copies)
   // a view that fails is that error: an empty list would read every dlv: link as gone (repoScanner already copes with an unreadable repo)
   let rows = deliverablesView({ stateDir, project, now, git, questions: Object.values(st.items).filter(i => i.kind === 'question') }).rows;
   const cfg = deliverableConfig(project), hasInstall = hasInstallTarget(project);
+  // RM-26 S6B-2: commit ids are named in batches, not one git per id. peel = ONE `cat-file --batch-check` of x^{commit} (the name lookup
+  // of `rev-parse --verify x^{commit}`), kept for this world only: a short id can turn ambiguous and a pruned commit goes. Its first
+  // batch carries the install / history ids the scan resolves (its `full` cache, seeded), every sha link of the roadmap and shaLinks
+  // (checkLinks: the links being added, not stored yet); an id not seen then is peeled on its own. No answer (git failed): not kept.
+  const fullOf = {};
+  let stored;
+  const linked = () => (stored ??= (() => { try { return Object.values(loadRoadmap(stateDir).items).flatMap(n => linksOf(n.links).sha); } catch { return []; } })());   // no roadmap to read: each id still peeled on its own
+  const peel = xs => {
+    const ask = [...new Set(xs)].filter(x => x && typeof x === 'string' && !(x in fullOf) && !/[\r\n]/.test(x));
+    const out = ask.length && cfg.repo ? git(cfg.repo, ['cat-file', '--batch-check=%(objectname) %(objecttype)'], { allowFail: true, input: ask.map(x => x + '^{commit}').join('\n') + '\n' }) : null;
+    if (out !== null) { const ls = out.split('\n'); ask.forEach((x, i) => { const [f, type] = (ls[i] || '').trim().split(' '); fullOf[x] = type === 'commit' ? f : null; }); }
+  };
   let scan;
   const sc = () => {
     if (scan === undefined) {
       scan = null;
-      if (cfg.repo) try { scan = scanRepo(cfg.repo, { main: cfg.main, remote: cfg.remote, cache: {}, git, installed: hasInstall ? lastInstall(cfg)?.commits || [] : [], history: cfg.history || [] }); } catch { scan = null; }
+      const installed = hasInstall ? lastInstall(cfg)?.commits || [] : [], history = cfg.history || [], ids = [...installed, ...history];
+      if (cfg.repo) peel([...ids, ...linked(), ...shaLinks]);
+      if (cfg.repo) try { scan = scanRepo(cfg.repo, { main: cfg.main, remote: cfg.remote, cache: { full: Object.fromEntries(ids.filter(x => typeof x === 'string' && x in fullOf).map(x => [x, fullOf[x]])) }, git, installed, history }); } catch { scan = null; }
       if (scan && !scan.mainSha) scan = null;
     }
     return scan;
   };
   const branches = b => { const s = sc(); if (!s) return null; const i = s.info(b); return { exists: i.exists, merged: i.merged, installed: i.installed, ref_date: i.ref_date }; };
-  const shaMemo = {};
+  // a sha link: its commit (peel), then "on main" for every peeled link at once = ONE `rev-list <fulls> ^main` (a full it prints is no
+  // ancestor of main, as `merge-base --is-ancestor`), kept in the repo's sha memo (gitfacts `anc <full> <main>`: a fact about commit
+  // ids). A full id the memo has on main needs no git (main reaches it: a commit). main is read from the ref files, else the scan's.
+  const shaMemo = {}, FULL40 = /^[0-9a-f]{40}$/;
+  let mainSha, firstAsk = true;
+  const mainRefs = (main = 'main', remote = 'origin') => ['refs/heads/' + main, `refs/remotes/${remote}/${main}`];   // scanRepo's order and defaults
+  const mainOf = () => {
+    if (mainSha !== undefined) return mainSha;
+    const d = cfg.repo ? gitDirs(cfg.repo) : null, [local, origin] = mainRefs(cfg.main, cfg.remote);
+    let m = d ? refSha(d.common, local) : undefined;
+    if (m === null) m = refSha(d.common, origin);
+    return (mainSha = m === undefined ? sc()?.mainSha ?? null : m);   // no checkout dir / a reftable repo: the scan's main
+  };
+  const resolve = xs => {
+    const todo = [...new Set(xs)].filter(x => !(x in shaMemo)), M = todo.length && cfg.repo ? mainOf() : null;
+    if (!M) { for (const x of todo) shaMemo[x] = null; return; }
+    const common = git.real ? gitDirs(cfg.repo)?.common : null, known = f => (common ? memo(common, `anc ${f} ${M}`, () => undefined) : undefined);
+    const ask = [];
+    for (const x of todo) { if (FULL40.test(x) && known(x) === true) shaMemo[x] = true; else ask.push(x); }
+    peel(ask);
+    const on = {}, walk = [...new Set(ask.map(x => fullOf[x]).filter(Boolean))].filter(f => { const k = known(f); if (k === undefined) return true; on[f] = k; return false; });
+    if (walk.length) {
+      const off = git(cfg.repo, ['rev-list', ...walk, '^' + M], { allowFail: true }), not = new Set((off ?? '').split('\n').map(l => l.trim()));
+      for (const f of walk) { on[f] = off !== null && !not.has(f); if (off !== null && common) memo(common, `anc ${f} ${M}`, () => on[f]); }
+    }
+    for (const x of ask) shaMemo[x] = fullOf[x] ? on[fullOf[x]] : null;
+  };
   const shas = x => {
     if (x in shaMemo) return shaMemo[x];
-    const s = sc();
-    const full = s ? (git(cfg.repo, ['rev-parse', '--verify', '--quiet', x + '^{commit}'], { allowFail: true }) || '').trim() : '';
-    return (shaMemo[x] = !full ? null : git(cfg.repo, ['merge-base', '--is-ancestor', full, s.mainSha], { allowFail: true }) !== null);
+    if (firstAsk) { firstAsk = false; resolve([...linked(), ...shaLinks, x]); } else resolve([x]);
+    return shaMemo[x];
   };
   const docs = p => fs.existsSync(path.isAbsolute(p) ? p : path.join(project.root || path.dirname(path.resolve(stateDir)), p));
   rows = [...rows, ...copyItems(stateDir, 'deliverable').map(dlvCopyRow)];
@@ -324,7 +364,7 @@ export function unplacedNow(stateDir, { now = Date.now(), items, dlv = [] } = {}
 export function checkLinks(stateDir, links, { project = {}, git, now, item = null } = {}) {
   if (!links?.length) return [];
   const home = homeOf(stateDir);
-  const W = world({ stateDir, project, git, now });
+  const W = world({ stateDir, project, git, now, shaLinks: links.filter(t => /^sha:/.test(t)).map(t => parseLink(t).id) });
   if (!W.repo && links.some(t => /^(branch|sha):/.test(t))) throw new RoadmapError(`a branch / sha link needs the project's repo to check it (pass --project): ${links.filter(t => /^(branch|sha):/.test(t)).join(', ')}`);
   const gone = links.filter(t => goneLinks([linkForm(t, null, home)], W).length);
   if (gone.length) throw new RoadmapError(`link to something that does not exist: ${gone.join(', ')}${gone.some(t => /^lane:/.test(t)) ? ` (a lane: ${home ? `x or ${home.id}/x for this home's, b/x for home b's` : 'x, its name here'})` : ''}`);
