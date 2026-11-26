@@ -126,14 +126,66 @@ export function timeRow(file, wallMs, lines) {
 // entry through the ESM loader, so `node chk.txt` (slop-fix.test.mjs's Done check) failed with ERR_UNKNOWN_FILE_EXTENSION under the
 // census (CI 45728652472). The env a file's `node --test` gets for it: the caller's NODE_OPTIONS kept, a census preload of an outer
 // suite (a ci-suite test running ci-suite --census) replaced, so each process lands in the innermost census only.
-export const CENSUS_PRELOAD = "const fs = require('node:fs'), { isMainThread } = require('node:worker_threads');\n" +
-  "if (isMainThread && process.env.NORN_CENSUS_NODE) try { fs.appendFileSync(process.env.NORN_CENSUS_NODE, `${process.pid}\\n`); } catch {}\n";
+// RM-26 S6B-0 (census v2): the preload also wraps node:child_process (every thread) and appends one `{ exe, sub, site }` line per child
+// it starts to NORN_CENSUS_SPAWN: sub = git's subcommand (past -C / -c), site = the engine module below engine/ of the first stack frame
+// that is not a git wrapper (bounded, dlvgit, gitfacts: their caller is the product path; SPEC-S6B work/spawnlog.cjs), else `tests`
+// (a test file, a fixture helper, node's own test runner). A Windows boundedSync child is `jobguard run <ms> <cwd> "<exe> <args>"`: the
+// line names the inner exe, `jg: true` (two process starts). exec routes through the exported execFile, so it is not wrapped again.
+// Each line costs one stack capture and one append, on a census dispatch only.
+function censusPreload() {
+  const fs = require('node:fs'), path = require('node:path'), cp = require('node:child_process'), { isMainThread } = require('node:worker_threads');
+  if (isMainThread && process.env.NORN_CENSUS_NODE) try { fs.appendFileSync(process.env.NORN_CENSUS_NODE, `${process.pid}\n`); } catch {}
+  const LOG = process.env.NORN_CENSUS_SPAWN;
+  if (!LOG) return;
+  const WRAP = /\/engine\/lib\/(bounded|dlvgit|gitfacts)\.mjs:/, PRE = /census-preload\.cjs|\(node:|^at node:/;
+  const site = () => {
+    const lim = Error.stackTraceLimit; Error.stackTraceLimit = 64;
+    const st = String(new Error().stack).split('\n').slice(1).map(x => x.trim().split('\\').join('/')).filter(x => !PRE.test(x));
+    Error.stackTraceLimit = lim;
+    const eng = st.filter(x => x.includes('/engine/')), pick = eng.find(x => !WRAP.test(x)) ?? eng[0];
+    if (!pick) return 'tests';
+    const m = pick.slice(pick.lastIndexOf('/engine/') + 8).match(/^[^:)]+/);
+    return m ? m[0] : 'tests';
+  };
+  const subOf = (exe, args) => {
+    if (!/(^|[\\/])git(\.exe)?$/i.test(exe)) return null;
+    for (let i = 0; i < args.length; i++) { const a = String(args[i]); if (a === '-C' || a === '-c') { i++; continue; } if (!a.startsWith('-')) return a; }
+    return null;
+  };
+  const unJg = (exe, args) => {
+    if (!/jobguard/i.test(path.basename(exe)) || args[0] !== 'run') return null;
+    const t = String(args[3] ?? '').match(/"[^"]*"|\S+/g) || [];
+    return { exe: (t[0] || '').replace(/"/g, ''), args: t.slice(1).map(x => x.replace(/^"|"$/g, '')) };
+  };
+  const log = (file, args) => {
+    try {
+      // exec hands execFile the whole command line as its file (shell: true): its first word is the exe
+      const f0 = String(file), cl = /\s/.test(f0) && !fs.existsSync(f0) ? f0.trim().split(/\s+/) : null;
+      const e0 = cl ? cl[0].replace(/^"|"$/g, '') : f0, a0 = cl ? cl.slice(1) : Array.isArray(args) ? args : [], j =unJg(e0, a0), e = j ? j.exe : e0, a = j ? j.args : a0;
+      fs.appendFileSync(LOG, JSON.stringify({ exe: path.basename(e.split('\\').join('/')), sub: subOf(e, a), site: site(), ...(j ? { jg: true } : {}) }) + '\n');
+    } catch {}
+  };
+  for (const name of ['spawn', 'spawnSync', 'execFile', 'execFileSync', 'fork']) {
+    const orig = cp[name];
+    cp[name] = function (file, args, ...rest) { log(name === 'fork' ? process.execPath : file, name === 'fork' ? [file] : args); return orig.call(this, file, args, ...rest); };
+  }
+  const ex = cp.execSync;
+  cp.execSync = function (cmd, ...rest) { const w = String(cmd).trim().split(/\s+/); log(w[0].replace(/^"|"$/g, ''), w.slice(1)); return ex.call(this, cmd, ...rest); };
+  require('node:module').syncBuiltinESMExports();
+}
+export const CENSUS_PRELOAD = `(${censusPreload})();\n`;
 /** (the caller's NODE_OPTIONS value, the preload's path, the file's census dir) -> the env entries a census run sets */
 export const censusEnv = (nodeOptions, preload, dir) => ({ GIT_TRACE2_EVENT: path.join(dir, 'trace2'), NORN_CENSUS_NODE: path.join(dir, 'node.txt'),
+  NORN_CENSUS_SPAWN: path.join(dir, 'spawn.jsonl'),
   NODE_OPTIONS: [String(nodeOptions ?? '').replace(/\s*--require="[^"]*census-preload\.cjs"/g, '').trim(), `--require="${preload}"`].filter(Boolean).join(' ') });
-/** the census dir -> { git_procs, node_procs } */
+/** the census dir -> { git_procs, node_procs, sites: { "<engine module>" | "tests": children started there }, jobguard: children run under jobguard } */
 export const censusCount = dir => {
-  // no trace2 dir / no node.txt: that file started no git / no node process (the preload creates node.txt on its first append)
-  const t2 = path.join(dir, 'trace2'), nf = path.join(dir, 'node.txt');
-  return { git_procs: fs.existsSync(t2) ? fs.readdirSync(t2).length : 0, node_procs: fs.existsSync(nf) ? fs.readFileSync(nf, 'utf8').split('\n').filter(Boolean).length : 0 };
+  // no trace2 dir / no node.txt / no spawn.jsonl: that file started no git / no node process / no child (the preload appends on demand)
+  const t2 = path.join(dir, 'trace2'), nf = path.join(dir, 'node.txt'), sf = path.join(dir, 'spawn.jsonl');
+  const spawns = fs.existsSync(sf) ? fs.readFileSync(sf, 'utf8').split('\n').filter(Boolean).flatMap(l => { try { return [JSON.parse(l)]; } catch { return []; } }) : [];
+  const sites = {};
+  for (const x of spawns.map(x => x.site).sort()) sites[x] = (sites[x] ?? 0) + 1;
+  return { git_procs: fs.existsSync(t2) ? fs.readdirSync(t2).length : 0, node_procs: fs.existsSync(nf) ? fs.readFileSync(nf, 'utf8').split('\n').filter(Boolean).length : 0,
+    sites, jobguard: spawns.filter(x => x.jg).length };
 };
+

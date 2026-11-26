@@ -189,7 +189,7 @@ test('censusEnv: the caller\'s NODE_OPTIONS kept, an outer census preload replac
 });
 
 test('ci-suite --census: git_procs (GIT_TRACE2_EVENT, a file per git process) and node_procs (a --require preload) per file', () => {
-  // plain starts no process; spawns starts 2 git and 1 node more, the node one on a .txt entry as slop-fix.test.mjs's Done check does
+  // plain starts no process; spawns starts 3 git and 1 node more, the node one on a .txt entry as slop-fix.test.mjs's Done check does
   // (CI 45728652472: an --import preload sent it through the ESM loader, ERR_UNKNOWN_FILE_EXTENSION)
   const d = mkTmp('meta-ci-census-'), out = path.join(d, 'times.json'), fx = path.join(d, 'fx');
   fs.mkdirSync(fx);
@@ -197,7 +197,11 @@ test('ci-suite --census: git_procs (GIT_TRACE2_EVENT, a file per git process) an
   fs.writeFileSync(path.join(fx, 'plain.test.mjs'), "import test from 'node:test';\ntest('census plain', () => {});\n");
   fs.writeFileSync(path.join(fx, 'spawns.test.mjs'), "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { spawnSync } from 'node:child_process';\n" +
     "test('census spawns: git twice', () => { for (let i = 0; i < 2; i++) assert.equal(spawnSync('git', ['--version']).status, 0); });\n" +
-    `test('census spawns: node once, on a .txt entry', () => { const r = spawnSync(process.execPath, [${JSON.stringify(path.join(fx, 'chk.txt'))}], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); });\n`);
+    `test('census spawns: node once, on a .txt entry', () => { const r = spawnSync(process.execPath, [${JSON.stringify(path.join(fx, 'chk.txt'))}], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); });\n` +
+    "test('census spawns: git from an engine module', async () => { const { probe } = await import('./engine/lib/probe.mjs'); assert.equal(probe(), 0); });\n" +
+    "test('census spawns: a jobguard command line', () => { spawnSync('no-such-jobguard', ['run', '1000', '-', '\"git\" rev-parse HEAD']); });\n");
+  fs.mkdirSync(path.join(fx, 'engine', 'lib'), { recursive: true });
+  fs.writeFileSync(path.join(fx, 'engine', 'lib', 'probe.mjs'), "import { spawnSync } from 'node:child_process';\nexport const probe = () => spawnSync('git', ['--version']).status;\n");
   const r = spawnSync(process.execPath, [CI, '--json', out, '--census', `${fx.split('\\').join('/')}/*.test.mjs`], { cwd: REPO, encoding: 'utf8', windowsHide: true, env: suiteEnv(process.env) });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const j = JSON.parse(fs.readFileSync(out, 'utf8')), [plain, spawns] = j.files;
@@ -205,8 +209,14 @@ test('ci-suite --census: git_procs (GIT_TRACE2_EVENT, a file per git process) an
   assert.deepEqual([plain.file, spawns.file].map(f => path.basename(f)), ['plain.test.mjs', 'spawns.test.mjs']);
   assert.equal(plain.git_procs, 0, JSON.stringify(plain));
   assert.ok(plain.node_procs >= 1, 'the file\'s own node --test process is counted');
-  assert.equal(spawns.git_procs - plain.git_procs, 2, JSON.stringify(j.files));
+  assert.equal(spawns.git_procs - plain.git_procs, 3, JSON.stringify(j.files));
   assert.equal(spawns.node_procs - plain.node_procs, 1, JSON.stringify(j.files));
+  // census v2 (RM-26 S6B-0): the 4 children the test file starts itself count under `tests`, the one an engine module starts under
+  // that module, and a jobguard command line (here a missing helper: the line is written before the start) counts once as jobguard
+  assert.deepEqual(Object.keys(spawns.sites), ['lib/probe.mjs', 'tests'], JSON.stringify(spawns));
+  assert.equal(spawns.sites['lib/probe.mjs'], 1, JSON.stringify(spawns));
+  assert.equal(spawns.sites.tests - (plain.sites.tests ?? 0), 4, JSON.stringify(j.files));
+  assert.deepEqual([plain.jobguard, spawns.jobguard], [0, 1], JSON.stringify(j.files));
 });
 
 // ---------- META-PR-FAST (RM-29): the fast PR job runs the test files a change touches ----------
