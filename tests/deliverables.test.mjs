@@ -410,7 +410,8 @@ test('a superseded deliverable whose branch has later commits off main keeps its
   for (const br of ['feat/a', 'fix/b']) record(state, { kind: 'question', ev: 'create', by: 'checkin', data: { title: `${br} has commits after its PR: land, rebuild or drop?`, lane: 'a', options: [] } }, { views: false, now: () => at(-2) });
   for (const br of ['feat/a', 'fix/b']) g(repo, 'merge', '-q', '--no-ff', '-m', `merge ${br}`, br);
   for (const id of ['DLV-1', 'DLV-2']) record(state, { kind: 'deliverable', ev: 'supersede', id, by: 'controller', data: { by: id === 'DLV-1' ? 'DLV-2' : 'DLV-1', why: 'landed as PR #8' } }, { views: false, now: () => at(-1) });
-  g(repo, 'checkout', '-q', 'feat/a'); commit(repo, 'crates/x/src/later.rs', 'fn later() {}\n', 'feat(a): a later commit, not on main'); g(repo, 'checkout', '-q', 'main');
+  g(repo, 'checkout', '-q', 'feat/a'); const later = commit(repo, 'crates/x/src/later.rs', 'fn later() {}\n', 'feat(a): a later commit, not on main');
+  g(repo, 'checkout', '-q', 'main'); g(repo, 'update-ref', 'refs/remotes/origin/feat/a', later);   // pushed, as rm7's were
   const closed = closeLandedQuestions(state, { project: p, nowMs: NOW });
   assert.deepEqual(closed.map(c => [c.q, c.dlv]), [['Q-2', 'DLV-2']], 'fix/b is on main with nothing after it: withdrawn as today');
   const items = loadState(state).items;
