@@ -1,6 +1,9 @@
 // A real headless browser page for dashboard tests (norn shot's launcher, engine/lib/shot.mjs; the Chrome DevTools protocol over
 // the built-in WebSocket): open(size) -> { go(url) (waits for body data-ready), ev(expr), until(expr), close() } - a timeout throws with the page's state. browser null = skip.
+// RM-26 S4: one browser per test file (launched on the first openPage, ended in a root after hook); each page is a fresh browser
+// context (Target.createBrowserContext + createTarget), so cookies and storage never cross tests. A launch costs 2-4 s on U.
 import path from 'node:path';
+import { after } from 'node:test';
 import { mkTmp } from './tmp.mjs';
 import { timed } from './race.mjs';
 
@@ -12,20 +15,47 @@ const installed = browser;
 export const skipWhy = process.env.META_TEST_BROWSER === 'skip' ? 'browser tests run in CI, not in a lane run (policy.tests.browser = ci)'
   : !shotLib ? 'engine/lib/shot.mjs (norn shot) is not on this branch' : !browser ? 'no Edge / Chrome / Chromium installed' : false;
 
-/** o.browser: another { kind, exe, prefix? } than the installed one (a test of the launch failure path) */
-export async function openPage(size = [1440, 900], { browser = installed } = {}) {
-  const profile = mkTmp('meta-shot-'), child = shotLib.launchBrowser({ browser, profile, size });
+const wsOpen = (url, exe) => { const ws = new WebSocket(url); return new Promise((res, rej) => { ws.onopen = () => res(ws); ws.onerror = () => rej(new Error(`the DevTools WebSocket of ${exe} failed`)); }); };
+const shared = new Map();   // browser exe -> Promise<{ child, profile, port, ws, call(method, params) }>: the file's browser
+const endBrowser = async b => { try { b.ws.close(); } catch { /* already closed */ } await shotLib.closeBrowser(b.child, b.profile, { dir: path.dirname(path.dirname(b.profile)) }); };
+after(async () => { const all = [...shared.values()]; shared.clear(); for (const p of all) { const b = await p.catch(() => null); if (b) await endBrowser(b); } });
+async function launch(browser) {
+  const profile = mkTmp('meta-shot-'), child = shotLib.launchBrowser({ browser, profile });
   // CI 43999056272: a browser that never came up was left running - its handle held the test file open to the 600 s cap (HANG).
   // A launch that fails ends the browser before the error (with its stderr) goes to the test.
-  let ws;
   try {
     const port = await shotLib.waitDevToolsPort({ browser, profile, child });
-    let page = null;
-    for (let i = 0; i < 100 && !page; i++) { try { page = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(t => t.type === 'page'); } catch { /* not yet */ } if (!page) await new Promise(r => setTimeout(r, 100)); }
-    if (!page) throw new Error(`the browser (${browser.exe}) is up on port ${port} but has no page target after 10 s; its stderr ends:\n${shotLib.stderrTail(profile)}`);
-    ws = new WebSocket(page.webSocketDebuggerUrl);
-    await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error(`the DevTools WebSocket of ${browser.exe} failed`)); });
+    let url = null;
+    for (let i = 0; i < 100 && !url; i++) { try { url = (await (await fetch(`http://127.0.0.1:${port}/json/version`)).json()).webSocketDebuggerUrl; } catch { /* not yet */ } if (!url) await new Promise(r => setTimeout(r, 100)); }
+    if (!url) throw new Error(`the browser (${browser.exe}) is up on port ${port} but has no browser target after 10 s; its stderr ends:\n${shotLib.stderrTail(profile)}`);
+    const ws = await wsOpen(url, browser.exe);
+    let id = 0; const pend = new Map();
+    ws.onmessage = e => { const m = JSON.parse(e.data); if (m.id && pend.has(m.id)) { pend.get(m.id)(m.result ?? { error: m.error }); pend.delete(m.id); } };
+    const call = (method, params = {}) => new Promise(r => { const i = ++id; pend.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
+    return { child, profile, port, ws, call };
   } catch (e) { await shotLib.closeBrowser(child, profile, { dir: path.dirname(path.dirname(profile)) }); throw e; }
+}
+// the file's browser, launched on first use. A failed launch is not kept (the next test launches again), nor one whose socket closed.
+async function fileBrowser(browser) {
+  const had = shared.get(browser.exe), b = had && await had.catch(() => null);
+  if (b?.ws.readyState === WebSocket.OPEN) return b;
+  if (b) { shared.delete(browser.exe); await endBrowser(b); }
+  const p = launch(browser); shared.set(browser.exe, p); p.catch(() => { if (shared.get(browser.exe) === p) shared.delete(browser.exe); });
+  return p;
+}
+
+/** o.browser: another { kind, exe, prefix? } than the installed one (a test of the launch failure path) */
+export async function openPage(size = [1440, 900], { browser = installed } = {}) {
+  const b = await fileBrowser(browser), ctx = await b.call('Target.createBrowserContext');
+  if (!ctx.browserContextId) throw new Error(`Target.createBrowserContext failed in ${browser.exe}: ${JSON.stringify(ctx.error)}`);
+  const dispose = () => b.call('Target.disposeBrowserContext', { browserContextId: ctx.browserContextId });
+  let ws;
+  try {
+    // its own window of the size --window-size gave a browser per page (the same innerWidth; ~47 px more innerHeight on Edge)
+    const t = await b.call('Target.createTarget', { url: 'about:blank', browserContextId: ctx.browserContextId, newWindow: true, width: size[0], height: size[1] });
+    if (!t.targetId) throw new Error(`Target.createTarget failed in ${browser.exe}: ${JSON.stringify(t.error)}`);
+    ws = await wsOpen(`ws://127.0.0.1:${b.port}/devtools/page/${t.targetId}`, browser.exe);
+  } catch (e) { await dispose(); throw e; }
   let id = 0; const pend = new Map(), on = new Map();
   // a timeout's message tells why the page stalled: console errors, uncaught exceptions / unhandled rejections, browser log errors
   // (a failed module load) and the requests still in flight
@@ -67,7 +97,8 @@ ${await pageState()}`);
       catch (e) { throw new Error(`go(${url}): body.dataset.ready not set in ${ms} ms
 ${e.message}`); }
     },
-    async close() { try { ws.close(); } catch { /* the socket is already closed: nothing to do, the browser is closed next */ } return shotLib.closeBrowser(child, profile, { dir: path.dirname(path.dirname(profile)) }); },
+    // the context goes; the file's browser stays for the next test (the root after hook ends it)
+    async close() { try { ws.close(); } catch { /* the socket is already closed: nothing to do, the context is disposed next */ } if (b.ws.readyState === WebSocket.OPEN) await timed(dispose(), 5000); },
   };
   return pg;
 }
