@@ -128,9 +128,9 @@ export function timeRow(file, wallMs, lines) {
 // suite (a ci-suite test running ci-suite --census) replaced, so each process lands in the innermost census only.
 export const CENSUS_PRELOAD = "const fs = require('node:fs'), { isMainThread } = require('node:worker_threads');\n" +
   "if (isMainThread && process.env.NORN_CENSUS_NODE) try { fs.appendFileSync(process.env.NORN_CENSUS_NODE, `${process.pid}\\n`); } catch {}\n";
-/** (env, the preload's path, the file's census dir) -> the env entries a census run sets */
-export const censusEnv = (env, preload, dir) => ({ GIT_TRACE2_EVENT: path.join(dir, 'trace2'), NORN_CENSUS_NODE: path.join(dir, 'node.txt'),
-  NODE_OPTIONS: [String(env.NODE_OPTIONS ?? '').replace(/\s*--require="[^"]*census-preload\.cjs"/g, '').trim(), `--require="${preload}"`].filter(Boolean).join(' ') });
+/** (the caller's NODE_OPTIONS value, the preload's path, the file's census dir) -> the env entries a census run sets */
+export const censusEnv = (nodeOptions, preload, dir) => ({ GIT_TRACE2_EVENT: path.join(dir, 'trace2'), NORN_CENSUS_NODE: path.join(dir, 'node.txt'),
+  NODE_OPTIONS: [String(nodeOptions ?? '').replace(/\s*--require="[^"]*census-preload\.cjs"/g, '').trim(), `--require="${preload}"`].filter(Boolean).join(' ') });
 /** the census dir -> { git_procs, node_procs } */
 export const censusCount = dir => {
   // no trace2 dir / no node.txt: that file started no git / no node process (the preload creates node.txt on its first append)

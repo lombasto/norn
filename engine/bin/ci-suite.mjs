@@ -103,7 +103,7 @@ const runFile = (name, f, i) => new Promise(resolve => {
   const t0 = Date.now();
   console.log(`ci-suite: start ${f}`);
   const child = spawn(process.execPath, ['--test', '--test-reporter=spec', '--test-reporter-destination=stdout',
-    `--test-reporter=${REPORTER}`, `--test-reporter-destination=${out}`, f], { env: { ...childEnv, TEMP: ft, TMP: ft, TMPDIR: ft, ...(census ? censusEnv(childEnv, fwd(preload), cd) : {}) } });
+    `--test-reporter=${REPORTER}`, `--test-reporter-destination=${out}`, f], { env: { ...childEnv, TEMP: ft, TMP: ft, TMPDIR: ft, ...(census ? censusEnv(childEnv.NODE_OPTIONS, fwd(preload), cd) : {}) } });
   const buf = [];
   child.stdout.on('data', d => buf.push(d)); child.stderr.on('data', d => buf.push(d));
   let hung = false, ended = false;

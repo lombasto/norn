@@ -182,9 +182,9 @@ test('ci-suite --json F: one row per file (wall_ms, cases_ms, outside_ms, cases,
 });
 
 test('censusEnv: the caller\'s NODE_OPTIONS kept, an outer census preload replaced by this one (a process counts in the innermost census)', () => {
-  const e = censusEnv({ NODE_OPTIONS: '--max-old-space-size=4096 --require="C:/t/a/census-preload.cjs"' }, 'C:/t/b/census-preload.cjs', 'C:/t/b/f.census');
+  const e = censusEnv('--max-old-space-size=4096 --require="C:/t/a/census-preload.cjs"', 'C:/t/b/census-preload.cjs', 'C:/t/b/f.census');
   assert.equal(e.NODE_OPTIONS, '--max-old-space-size=4096 --require="C:/t/b/census-preload.cjs"');
-  assert.equal(censusEnv({}, '/t/p.cjs', '/t/d').NODE_OPTIONS, '--require="/t/p.cjs"');
+  assert.equal(censusEnv(undefined, '/t/p.cjs', '/t/d').NODE_OPTIONS, '--require="/t/p.cjs"');
   assert.equal(e.GIT_TRACE2_EVENT, path.join('C:/t/b/f.census', 'trace2'));
 });
 
