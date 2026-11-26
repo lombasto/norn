@@ -23,7 +23,7 @@ function repoOf(base, head, more = [], at = 'feat/x') {
 const LJ = loadRules().find(r => r.id === 'LJ');
 const msg = (ruleId, line, message) => ({ ruleId, severity: 2, message, line, column: 1 });
 /** a recorded ESLint: side -> [{ filePath, messages }]; every run it is handed is kept in o.runs */
-const recorded = (out, o = {}) => (run, side) => { (o.runs ||= []).push({ run, side }); return JSON.stringify(out[side] || []); };
+const recorded = (out, o = {}) => (run, side, { texts } = {}) => { (o.runs ||= []).push({ run, side, files: texts ? [...texts.keys()] : [] }); return JSON.stringify(out[side] || []); };
 
 test('LJ: a finding is LJ/<the tool\'s rule>; the levels are Choppa\'s data (today\'s BLOCK set), every other rule the config turns on is shadow', () => {
   const repo = repoOf({ 'a.mjs': 'export const a = 1;\n' }, { 'a.mjs': "import fs from 'node:fs';\nexport const a = b;\nconsole.log(a);\n" });
@@ -37,13 +37,15 @@ test('LJ: a finding is LJ/<the tool\'s rule>; the levels are Choppa\'s data (tod
 
 test('LJ: both sides lint with the merge base\'s config; a branch that edits it is LJ/config-changed (BLOCK), and its own config never reaches the run', () => {
   const baseCfg = "export default [{ rules: { 'no-console': 'off' } }];\n", headCfg = 'export default [];\n';
-  const repo = repoOf({ 'eslint.config.mjs': baseCfg, 'a.mjs': 'export const a = 1;\n' }, { 'eslint.config.mjs': headCfg, 'a.mjs': 'export const a = 2;\n' });
-  const o = {}, r = slopCheck({ repo, base: 'main', rules: [LJ], tool: recorded({}, o) });
+  const repo = repoOf({ 'eslint.config.mjs': baseCfg, 'a.mjs': 'export const a = 1;\n', 'c.mjs': 'export const c = 1;\n' }, { 'eslint.config.mjs': headCfg, 'a.mjs': 'export const a = 2;\n', 'c.mjs': 'export const c = 2;\n' });
+  const o = {}, r = slopCheck({ repo, base: 'main', rules: [LJ], tool: recorded({ head: [{ filePath: 'a.mjs', messages: [msg('no-undef', 1, "'x' is not defined.")] }] }, o) });
   assert.deepEqual(o.runs.map(x => [x.side, x.run.config]), [['head', baseCfg], ['base', baseCfg]], 'the base config, for both sides');
+  assert.deepEqual(o.runs.map(x => [x.side, x.files]), [['head', ['a.mjs', 'c.mjs']], ['base', ['a.mjs']]], 'the base side lints only the files with a head finding');
   assert.deepEqual(r.blocks.map(b => [b.rule, b.file, b.level]), [['LJ/config-changed', 'eslint.config.mjs', 'BLOCK']]);
   const plain = repoOf({ 'a.mjs': 'export const a = 1;\n' }, { 'a.mjs': 'export const a = 2;\n' }), o2 = {};
   assert.deepEqual(slopCheck({ repo: plain, base: 'main', rules: [LJ], tool: recorded({}, o2) }).blocks, []);
   assert.equal(o2.runs[0].run.config, null, 'no config at base: LJ\'s own rules alone');
+  assert.deepEqual(o2.runs.map(x => x.side), ['head'], 'no head finding: the base side is not linted');
   assert.deepEqual(o2.runs[0].run.rules, LJ.rules);
 });
 
