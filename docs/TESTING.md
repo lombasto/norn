@@ -42,6 +42,10 @@ concurrency group, and nothing cancels a running suite, so a baseline finishes. 
 `git_procs` and `node_procs` per file (ci-suite `--census`: git trace2 files and a node `--require` preload). The census costs time,
 so it runs only on such a dispatch.
 
+Each ci.yml leg builds norn-hook and norn-code once (RM-26 S2), through rustbin `ensurePart` as pr.yml does, with the store's bin/
+cached by the parts' sources; norn-code's cargo test, fmt and clippy run in that build's target dir. The suite's `test.before(rustReady)`
+then finds the binaries and builds nothing (it still builds them on a machine that has none).
+
 ## The run budget: policy.tests (ruling Q-28, test-diet S1)
 
 One policy, `policy.tests`, sets what a claude run (worker, MERGE, check-in, resumed) may test. It shows in Settings (agents /

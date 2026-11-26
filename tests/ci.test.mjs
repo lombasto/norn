@@ -69,6 +69,23 @@ test('ci.yml: push to main + nightly + dispatch, never a pull request; the full 
   assert.deepEqual(inp.slice(ci + 1, ci + 4).filter(l => !l.startsWith('description:')), ['type: boolean', 'default: false']);
 });
 
+// RM-26 S2 (DEC-a-651): one Rust build per job and one way to build. The parts are built through rustbin ensurePart (cached by their
+// sources, as pr.yml) before the suite, so its rustReady builds nothing; norn-code's cargo checks run in ensurePart's target dir; no
+// other cargo build; macOS builds norn-code only.
+test('ci.yml: each Rust part is built once per job through ensurePart, and norn-code\'s cargo checks reuse its target dir', () => {
+  const s = WF('ci.yml').split(/\r?\n/).filter(l => l.trim() && !l.trim().startsWith('#')).map(l => l.trim());
+  const c = s.indexOf('path: .git/norn/rust/bin'), b = s.findIndex(l => l.startsWith("- name: Norn's Rust parts")), at = s.indexOf('- name: suite (fails only on a red not in tests/KNOWN-REDS.txt)');
+  assert.ok(c > 0 && s[c - 2] === '- uses: actions/cache@v4' && s[c + 1] === "key: rust-hook-code-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('engine/hook-rs/**', '!engine/hook-rs/target/**', 'engine/code-rs/**', '!engine/code-rs/target/**') }}", 'the store\'s bin/ cached by the parts\' sources');
+  assert.ok(s.indexOf('- uses: actions/setup-node@v4') < b && s[s.indexOf('- uses: actions/setup-node@v4') + 1] === 'with:', 'node on every leg (ensurePart is Node), before the build');
+  assert.ok(b > c && b < at, 'the build step runs after the cache restore, before the suite');
+  assert.deepEqual(s.slice(b + 1, b + 5), ['env:', "PARTS: ${{ matrix.code_rs_only && 'code' || 'hook code' }}", 'shell: bash', 'run: |']);
+  const body = s.slice(b + 5, s.findIndex((l, k) => k > b && l.startsWith('- ') && !l.startsWith('- name: Norn')));
+  assert.ok(body.includes('import { ensurePart, binOf } from "./engine/lib/rustbin.mjs";') && body.some(l => /ensurePart\(p, /.test(l)) && body.some(l => l.includes('process.exit(1)')), 'Norn\'s part build; a part that cannot be had fails the step');
+  const tgt = body.indexOf('export CARGO_TARGET_DIR="$(node --input-type=module -e \'import { targetOf } from "./engine/lib/rustbin.mjs"; console.log(targetOf("code"))\')"');
+  assert.ok(tgt > 0 && body.slice(tgt + 1).join('\n') === ['cd engine/code-rs', 'cargo test --locked', 'cargo fmt --check', 'cargo clippy --locked --all-targets -- -D warnings'].join('\n'), 'the cargo checks in ensurePart\'s target dir');
+  assert.ok(!s.some(l => /cargo build/.test(l)), 'no second way to build');
+});
+
 test('pr.yml: pull_request only; slop of the diff, norn smoke and ci-suite --changed run as three side-by-side Linux jobs; no full suite', () => {
   const t = WF('pr.yml');
   assert.ok(!t.includes('\t'), 'tabs in YAML');

@@ -1,7 +1,8 @@
 # The full node suite on GitHub-hosted runners (Windows + Linux) after the merge: on a push to main and nightly. A pull request runs
 # the fast check instead (pr.yml, META-PR-FAST RM-29): slop, smoke and the tests of the files it changes.
-# engine/bin/ci-suite.mjs fails only on a red NOT listed in tests/KNOWN-REDS.txt. Before the suite, norn-code (engine/code-rs, the code
-# graph: docs/code-graph.md) is built and gated: build, test, fmt and clippy with --locked; macOS runs that step only (DEC-a-574).
+# engine/bin/ci-suite.mjs fails only on a red NOT listed in tests/KNOWN-REDS.txt. Before the suite, norn-hook and norn-code are built
+# once through rustbin ensurePart (cached by their sources) and norn-code (engine/code-rs, the code graph: docs/code-graph.md) is
+# gated: test, fmt and clippy with --locked in that build's target dir; macOS runs that step only, for norn-code (DEC-a-574).
 name: ci
 
 # A docs-only push (markdown / docs / images / html) runs no suite; the nightly runs regardless.
@@ -47,19 +48,35 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - name: norn-code (engine/code-rs) - build, test, fmt, clippy
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/cache@v4
+        with:
+          path: .git/norn/rust/bin
+          key: rust-hook-code-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('engine/hook-rs/**', '!engine/hook-rs/target/**', 'engine/code-rs/**', '!engine/code-rs/target/**') }}
+      # RM-26 S2: the one build of each part per job is Norn's own (rustbin ensurePart, as pr.yml), so the suite's rustReady finds the
+      # content-named binary and builds nothing; norn-code's test, fmt and clippy run in ensurePart's target dir (targetOf), so the
+      # crate's dependencies compile once per job. macOS gates norn-code only.
+      - name: Norn's Rust parts (norn-hook, norn-code) - ensurePart, then norn-code's test, fmt, clippy in its target dir
+        env:
+          PARTS: ${{ matrix.code_rs_only && 'code' || 'hook code' }}
         shell: bash
-        working-directory: engine/code-rs
         run: |
           rustup component add rustfmt clippy
-          cargo build --release --locked
+          cargo --version
+          node --input-type=module -e '
+            import { ensurePart, binOf } from "./engine/lib/rustbin.mjs";
+            for (const p of process.env.PARTS.split(" ")) {
+              const t0 = Date.now(), r = ensurePart(p, { err: s => console.error(s), start: () => console.log("building " + p) });
+              if (!r.ok) { console.error(r.why); process.exit(1); }
+              console.log(p + ": " + binOf(p) + (r.built ? " built" : " cached") + " in " + ((Date.now() - t0) / 1000).toFixed(1) + " s");
+            }'
+          export CARGO_TARGET_DIR="$(node --input-type=module -e 'import { targetOf } from "./engine/lib/rustbin.mjs"; console.log(targetOf("code"))')"
+          cd engine/code-rs
           cargo test --locked
           cargo fmt --check
           cargo clippy --locked --all-targets -- -D warnings
-      - uses: actions/setup-node@v4
-        if: ${{ !matrix.code_rs_only }}
-        with:
-          node-version: 24
       # Chromium's Linux SUID sandbox: the helper beside each browser (Edge's msedge-sandbox, Chrome's chrome-sandbox) must be
       # owned by root with mode 4755, else the browser aborts rather than run unsandboxed (setuid_sandbox_host.cc; "Linux SUID
       # Sandbox", https://chromium.googlesource.com/chromium/src/+/main/docs/linux/suid_sandbox_development.md). The sandbox stays on.
