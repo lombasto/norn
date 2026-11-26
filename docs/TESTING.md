@@ -36,6 +36,12 @@ The book's "nothing to lose except computer time" (p. 142) does not hold on a sh
 The owner makes the PR check's `slop` job a required status (Settings > Rules > Rulesets: "Require status checks to pass", check
 `slop`); only that repository setting lets it hold a merge. engine/lib/slop/rules/README.md ("On a pull request") has the details.
 
+The B tier's times (RM-26 S0): each ci.yml leg uploads the artifact `ci-times-<os>` (ci-suite `--json`), one row per test file with
+`wall_ms`, `cases_ms` (its top-level cases), `outside_ms` (the rest: start, imports, teardown) and `cases`. A dispatch is its own
+concurrency group, and nothing cancels a running suite, so a baseline finishes. `gh workflow run ci.yml -f census=true` adds
+`git_procs` and `node_procs` per file (ci-suite `--census`: git trace2 files and a node `--import` preload). The census costs time,
+so it runs only on such a dispatch.
+
 ## The run budget: policy.tests (ruling Q-28, test-diet S1)
 
 One policy, `policy.tests`, sets what a claude run (worker, MERGE, check-in, resumed) may test. It shows in Settings (agents /

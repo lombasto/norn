@@ -1,5 +1,7 @@
 // META-GTP-CI 1: the CI suite judge (GT-PARITY-PLAN 2.11). tests/KNOWN-REDS.txt lists the reds CI tolerates, one per line:
-// `<file> :: <test name or name prefix>`; the run fails only on a red that no line names. Pure: the runner is engine/bin/ci-suite.mjs.
+// `<file> :: <test name or name prefix>`; the run fails only on a red that no line names. Pure but censusCount (reads a dir): the runner is engine/bin/ci-suite.mjs.
+import fs from 'node:fs';
+import path from 'node:path';
 import { globToRe } from './dlvgit.mjs';
 
 const fwd = s => s.split('\\').join('/');
@@ -110,3 +112,25 @@ export function pickTests(changed, tests, read, max = Infinity) {
   const cut = importers.slice(0, max).map(x => x.t);
   return { run: [...close, ...cut].sort(), left: importers.slice(max).map(x => x.t).sort() };
 }
+
+// RM-26 S0 (lean-suite SPEC 8): the per-file time row of `ci-suite --json`. lines: the file's ci-reporter lines; a `{ top, ms }` line is
+// one finished top-level case. cases_ms = their sum; outside_ms = the rest of the file's wall (process start, imports, hooks, teardown).
+/** (file, wall ms, reporter lines) -> { file, wall_ms, cases_ms, outside_ms, cases } */
+export function timeRow(file, wallMs, lines) {
+  const tops = lines.filter(x => x.top != null), cases = Math.round(tops.reduce((s, x) => s + (Number(x.ms) || 0), 0)), wall = Math.round(wallMs);
+  return { file, wall_ms: wall, cases_ms: cases, outside_ms: wall - cases, cases: tops.length };
+}
+// `ci-suite --census`: a `--import` preload (written into the suite's temp dir) appends one line per node process (main thread) to the
+// file CI_SUITE_CENSUS_NODE names; git writes one trace2 event file per process into the GIT_TRACE2_EVENT directory (git-config(1)
+// trace2.eventTarget: a directory target). The env a file's `node --test` gets for it, NODE_OPTIONS kept and appended to.
+export const CENSUS_PRELOAD = "import fs from 'node:fs'; import { isMainThread } from 'node:worker_threads';\n" +
+  "if (isMainThread && process.env.CI_SUITE_CENSUS_NODE) try { fs.appendFileSync(process.env.CI_SUITE_CENSUS_NODE, `${process.pid}\\n`); } catch {}\n";
+/** (env, preload file URL, the file's census dir) -> the env entries a census run sets */
+export const censusEnv = (env, preloadUrl, dir) => ({ GIT_TRACE2_EVENT: path.join(dir, 'trace2'), CI_SUITE_CENSUS_NODE: path.join(dir, 'node.txt'),
+  NODE_OPTIONS: [env.NODE_OPTIONS, `--import=${preloadUrl}`].filter(Boolean).join(' ') });
+/** the census dir -> { git_procs, node_procs } */
+export const censusCount = dir => {
+  const ls = d => { try { return fs.readdirSync(d); } catch { return []; } };
+  let node = 0; try { node = fs.readFileSync(path.join(dir, 'node.txt'), 'utf8').split('\n').filter(Boolean).length; } catch {}
+  return { git_procs: ls(path.join(dir, 'trace2')).length, node_procs: node };
+};
