@@ -214,3 +214,26 @@ test('a pass records the repo files its test and node children read: reused whil
   assert.deepEqual([await go('RUN-9', 'a pass without reads'), starts()], ['ran', 6]);
   assert.ok(freshPass(dir, k0).reads, 'the new pass carries its record');
 });
+
+// task-NORN-TEST-RECORD-S2 (DEC-a-658): one `git ls-files` that failed once made repoFiles return the walk (no vendor/): foldReads dropped
+// the vendored files a test read and stored that pass under its normal key. In a git repo the listing is git's or an Error, never the walk.
+const gitFake = fails => { const calls = []; return { calls, git: (file, args, opts) => { calls.push(args); return calls.length <= fails ? { status: 128, stdout: '', stderr: 'fatal: index.lock busy\nmore\n', error: null } : { status: 0, stdout: 'engine/dash/vendor/x.js\0tests/a.test.mjs\0', stderr: '' }; } }; };
+test('in a git repo the file listing is git\'s or an Error after 3 tries, never the walk; a folder with no .git above it is walked', () => {
+  const w = world();
+  execFileSync('git', ['init', '-q'], { cwd: w.root, stdio: 'ignore', windowsHide: true });
+  const bad = gitFake(99);
+  assert.throws(() => repoIndex(w.root, { git: bad.git }).files(), e => e.message.includes(w.root) && /\b128\b/.test(e.message) && /index\.lock busy/.test(e.message) && /3/.test(e.message));
+  assert.equal(bad.calls.length, 3, 'git ls-files was tried 3 times');
+  const once = gitFake(1);
+  assert.deepEqual(repoIndex(w.root, { git: once.git }).files(), ['engine/dash/vendor/x.js', 'tests/a.test.mjs'], 'git\'s list after one failed try');
+  assert.equal(once.calls.length, 2);
+  const plain = world(), none = gitFake(99);
+  assert.deepEqual(repoIndex(plain.root, { git: none.git }).files(), ['engine/m.mjs', 'tests/a.test.mjs'], 'no .git above: the walk');
+});
+test('runCached stores no result when the listing fails: the Error passes through', async () => {
+  const w = world();
+  fs.writeFileSync(path.join(w.root, 'tests', 'a.test.mjs'), "import test from 'node:test';\ntest('ok', () => {});\n");
+  execFileSync('git', ['init', '-q'], { cwd: w.root, stdio: 'ignore', windowsHide: true });
+  await assert.rejects(runCached('tests/a.test.mjs', { ix: repoIndex(w.root, { git: gitFake(99).git }), dir: w.dir, run: 'RUN-1', pollMs: 100 }), /git ls-files/);
+  assert.deepEqual(fs.readdirSync(w.dir).filter(n => n.endsWith('.json') || n.endsWith('.lock')), [], 'no result, no lock left');
+});
