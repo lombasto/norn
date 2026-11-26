@@ -177,8 +177,10 @@ test('a run started on the kept lane after a fold has the fold line in its promp
   const col = f.case('item');
   ok(f.norn(['fold', col, '--into', 'web-nav', '--as', 'checkin', '--why', 'one lane']));
   for (const q of f.onLane('web-nav', 'queued')) record(f.state, { kind: 'run', ev: 'withdraw', id: q.id, by: 'owner', data: { why: 'not this test' } });   // the moved run would go first
+  // the run's policy is this one, not project.json's: slop off here too, or every fake run's end does a full slop check (14 s idle,
+  // past the 30 s settle wait under CI load on Windows) before its supervisor exits
   const opts = o => ({ state: f.state, locksDir: path.join(f.t, 'state', 'locks'), executor: 'fake', lane: 'web-nav', worktree: nav.wt, notes: nav.notes, hbMs: 150, staleMs: 60000,
-    policy: { auto_resume_max: 0 }, budget: { max_claude_workers: 4 }, tick: null, brief: f.brief('nav2', '# web-nav NAV2\nScope: web/nav.mjs\nTests: t\nDone: d\nmode: done\n'), ...o });
+    policy: { auto_resume_max: 0, slop: { enabled: false } }, budget: { max_claude_workers: 4 }, tick: null, brief: f.brief('nav2', '# web-nav NAV2\nScope: web/nav.mjs\nTests: t\nDone: d\nmode: done\n'), ...o });
   const spec = id => JSON.parse(fs.readFileSync(path.join(f.state, 'runs', `${id}.spec.json`), 'utf8'));
   const r = startRun(opts({ stage: 'NAV2' }));
   assert.ok(r.run && !r.queued, 'started');

@@ -53,8 +53,10 @@ function fixture() {
   };
   /** the lane's work lands: its branch is pushed to main and the home fetches it (origin/main moves) */
   f.land = lane => { git(home, 'push', '-q', 'origin', `norn/${lane}:main`); git(home, 'fetch', '-q', 'origin'); };
+  // the run's policy is this one, not project.json's: slop off here too, or every fake run's end does a full slop check (14 s idle,
+  // past the 30 s settle wait under CI load on Windows) before its supervisor exits
   f.opts = (o = {}) => ({ state, locksDir: locks, executor: 'fake', notes: path.join(t, `${o.lane}-NOTES.md`), hbMs: 150, staleMs: 60000, ctx_from: pf,
-    policy: { auto_resume_max: 0 }, budget: { max_claude_workers: 4 }, tick: null, ...o });
+    policy: { auto_resume_max: 0, slop: { enabled: false } }, budget: { max_claude_workers: 4 }, tick: null, ...o });
   f.item = id => loadState(state).items[id];
   f.ended = id => waitFor(() => { const it = f.item(id); return settled(it) && it; });
   f.row = id => readiness(state).find(r => r.id === id);

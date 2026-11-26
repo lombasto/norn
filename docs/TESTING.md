@@ -63,6 +63,14 @@ rounds); the scope hook enforces it at each test command and the run-end Done ch
   cache: a file another run already passed on the same content (the file, everything it imports, the node version) in the last
   day is reused, and one running now in another run is waited for, never started twice. A direct `node --test` or
   `ci-suite --changed` is refused with the `norn tests run` command to use.
+- **A pass carries the repo files its test read.** `norn tests run` records the files read and the folders listed through node's
+  fs by the test process and its node children (a killed child included), inside the repo but not `.git/`, `node_modules/`, the
+  top-level `state/` or a git-ignored file, and stores them with their hashes beside the pass. A pass is reused only when it has
+  that record and none of it changed; otherwise the file runs again and the line that says so names the changed path; a file listing git cannot give (3 tries) is an
+  error, never a guess, and stores nothing. The
+  `// reads:` header below stays: it feeds the key and the picks (`--changed`, the PR pick, `norn tests for`). Not recorded: a
+  child that is not node (git, cargo, norn-code, a browser), a node child started without its parent's env, and a probe that
+  reads nothing (`existsSync`, `statSync`).
 - **A test that reads a repo file it does not import declares it.** The cache key holds only the file and the modules it reaches,
   so a test that asserts on a workflow, a doc or a data file it reads with fs would be reused on a stale pass when that file
   changes (and no pick would run it). Declare such files in the test file's leading comment, before its first code line:
