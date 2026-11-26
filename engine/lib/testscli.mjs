@@ -11,7 +11,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { advisory, crossings } from './advisory.mjs';
 import { subdirOf, inDir, projectHome } from './monorepo.mjs';
 import { suiteKind, testsFor, classify, IMPACT_FILE } from './testtimes.mjs';
-import { repoIndex, runCached, cacheDir, cacheDirOf, cacheLog, caseLog, casesFile, prune } from './testcache.mjs';
+import { repoIndex, runCached, cacheDir, cacheDirOf, cacheLog, caseLog, casesFile, prune, recordedReads } from './testcache.mjs';
 import { buildIndex, writeIndex, median, CASES_FILE } from './testindex.mjs';
 import { graphIndex, testGroups, groupLine, pickGraph, IMPACT_LIMITS, PYTEST_FILE, RUNNERS } from './testimpact.mjs';
 import { graphAt } from './codegraph.mjs';
@@ -143,9 +143,13 @@ export function testsCmd(argv, { out = console.log, err = console.error, where, 
     if (!f._.length) { err('error: tests for needs one or more files (paths relative to the project folder)'); return 2; }
     const im = readJson(path.join(dir, IMPACT_FILE));
     if (!im) { err(`error: no impact map (${fwd(path.join(dir, IMPACT_FILE))} does not exist)`); return 2; }
-    const a = testsFor(im, f._), groups = testGroups(im, a.tests);
-    print({ ...a, groups, basis: 'inferred', at: im.at, sha: im.sha, graph: im.graph ?? null }, [...a.rows.map(r => `${r.file}: ${r.tests.length ? r.tests.join(' ') : r.known ? 'no test covers it' : 'not in the impact map\'s coverage'}`),
-      ...groups.map(groupLine), `${a.tests.length} test file(s) to run, inferred (the impact map at ${im.sha ?? '?'}, ${im.at}${im.graph?.na ? `; the code graph n/a: ${im.graph.na}` : ''})`]);
+    // NORN-IMPACT-READS: a row's recorded read edges carry their basis (the stored pass's key and age) - why the test was picked
+    const a = testsFor(im, f._), groups = testGroups(im, a.tests), rows = a.rows.map(r => ({ ...r, recorded: im.recorded?.[r.file] ?? {} }));
+    const age = at => { const h = (Date.now() - Date.parse(at)) / 3600e3; return h < 1 ? `${Math.round(h * 60)} min` : `${Math.round(h)} h`; };
+    const recLine = r => (Object.keys(r.recorded).length ? [`  recorded reads: ${Object.entries(r.recorded).map(([t, x]) => `${t} (pass ${x.key.slice(0, 12)}, ${age(x.at)} old)`).join(', ')}`] : []);
+    const basis = rows.some(r => Object.keys(r.recorded).length) ? 'inferred + recorded' : 'inferred';
+    print({ ...a, rows, groups, basis, at: im.at, sha: im.sha, graph: im.graph ?? null }, [...rows.flatMap(r => [`${r.file}: ${r.tests.length ? r.tests.join(' ') : r.known ? 'no test covers it' : 'not in the impact map\'s coverage'}`, ...recLine(r)]),
+      ...groups.map(groupLine), `${a.tests.length} test file(s) to run, ${basis} (the impact map at ${im.sha ?? '?'}, ${im.at}${im.graph?.na ? `; the code graph n/a: ${im.graph.na}` : ''})`]);
     return 0;
   }
   if (verb === 'index') {
@@ -153,11 +157,11 @@ export function testsCmd(argv, { out = console.log, err = console.error, where, 
     const code = tests.length ? git(repo, ['ls-files']).split('\n').map(fwd).filter(x => classify(x) === 'code') : [], graph = graphPart(repo, w.state);
     if (!tests.length && !graph) { err(`error: tests index: no test suite in ${repo}: no node:test files (tests/*.test.mjs), no pytest file and no .rs file`); return 2; }
     if (!tests.length && graph.na) { err(`error: tests index: no node:test suite (tests/*.test.mjs) in ${repo}, and the pytest / cargo index needs the code graph: n/a: ${graph.na}`); return 3; }
-    const idx = buildIndex({ ix: repoIndex(repo), tests, code, log: cacheLog(cacheDirOf(w.state)), sha: sha(), graph });
+    const idx = buildIndex({ ix: repoIndex(repo), tests, code, log: cacheLog(cacheDirOf(w.state)), sha: sha(), graph, recorded: recordedReads(cacheDirOf(w.state), tests) });
     writeIndex(dir, idx);
     const n = Object.keys(idx.cases.files).length, by = RUNNERS.map(r => [r, idx.cases.cases.filter(c => c.runner === r)]).filter(([, cs]) => cs.length).map(([r, cs]) => `${cs.length} ${r}`).join(', ');
     print({ cases: idx.cases.cases.length, files: n, covered: Object.keys(idx.impact.sources).length, uncovered: idx.impact.uncovered.length, timed: idx.times.files.length, sha: idx.cases.sha, suite: idx.impact.suite, graph: idx.impact.graph ?? null },
-      [`tests index: ${idx.cases.cases.length} test cases in ${n} files; ${Object.keys(idx.impact.sources).length} source files covered, ${idx.impact.uncovered.length} not; ${idx.times.files.length} files timed (at ${idx.cases.sha}); by runner: ${by || 'none'}${graph?.na ? `; pytest / cargo n/a: ${graph.na}` : ''}`]);
+      [`tests index: ${idx.cases.cases.length} test cases in ${n} files; ${Object.keys(idx.impact.sources).length} source files covered, ${idx.impact.uncovered.length} not; ${idx.times.files.length} files timed (at ${idx.cases.sha}); by runner: ${by || 'none'}; ${Object.keys(idx.impact.recorded ?? {}).length} non-code files with recorded readers${graph?.na ? `; pytest / cargo n/a: ${graph.na}` : ''}`]);
     return 0;
   }
   if (verb === 'history') {

@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { mkTmp } from './helpers/tmp.mjs';
 import { classify } from '../engine/lib/testcmd.mjs';
+import { pickTests } from '../engine/lib/cisuite.mjs';
 import { testsPolicy, testsFree, policyWords, fullSuiteDeny, testsCheck, testMsOf, testRunOf, pickRun } from '../engine/lib/testpolicy.mjs';
 
 const DEF = { mode: 'light', run_budget_min: 3, browser: 'ci', full_suite: 'deny' };
@@ -151,4 +152,14 @@ test('pickRun: a test whose // reads: header matches a changed file runs (light:
   assert.deepEqual(pickRun({ mode: 'light', changed: ['.github/workflows/pr.yml'], tests, read }), { run: ['tests/ci.test.mjs', 'tests/lint.test.mjs'], none: [], left: [] }, 'not the test whose reads line is past its first code line');
   assert.deepEqual(pickRun({ mode: 'light', changed: ['engine/lib/alpha.mjs'], tests, read }).run, ['tests/alpha.test.mjs', 'tests/lint.test.mjs'], 'the per pick and every header that matches');
   assert.deepEqual(pickRun({ mode: 'changed', changed: ['.github/workflows/pr.yml'], tests, read }), { run: ['tests/ci.test.mjs', 'tests/lint.test.mjs'], none: [], left: [] });
+});
+
+// NORN-IMPACT-READS: cisuite pickTests - a test the impact map's recorded reads name for a changed doc ranks with the importers, under the cap
+test('pickTests: impact.json recorded readers of a changed doc are picked under the importers cap; no impact map, no recorded pick', () => {
+  const tests = Array.from({ length: 22 }, (_, i) => `tests/r${String(i).padStart(2, '0')}.test.mjs`), read = () => "import test from 'node:test';\n";
+  const impact = { sources: {}, recorded: { 'docs/p.md': Object.fromEntries(tests.map(t => [t, { basis: 'recorded', key: 'k', at: 'now' }])) } };
+  assert.deepEqual(pickTests(['docs/p.md'], tests, read, Infinity, impact).run, tests);
+  assert.deepEqual(pickTests(['docs/p.md'], tests, read, 20).run, [], 'no impact map: no recorded pick');
+  const ch = pickTests(['docs/p.md'], tests, read, 20, impact);
+  assert.deepEqual([ch.run.length, ch.left], [20, ['tests/r20.test.mjs', 'tests/r21.test.mjs']]);
 });

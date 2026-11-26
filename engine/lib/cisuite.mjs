@@ -93,8 +93,9 @@ const base = f => f.split('/').at(-1);
 const stemOf = f => /\.m?js$/.test(f) && !f.startsWith('tests/') ? base(f).replace(/\.m?js$/, '') : null;
 const fixtureOf = f => { const p = f.split('/'); return p[0] === 'tests' && p[1] === 'fixtures' && p.length > 3 ? `fixtures/${p[2]}` : null; };
 /** changed: repo-relative paths; tests: the suite's test files (repo-relative); read(f) -> text | null; max: the importers' cap (Infinity
- *  = none). -> { run: the test files to run, sorted; left: the importers past the cap, sorted } */
-export function pickTests(changed, tests, read, max = Infinity) {
+ *  = none); impact: a `norn tests index` impact.json, whose recorded readers of a changed file (NORN-IMPACT-READS) rank with the importers,
+ *  under the cap. -> { run: the test files to run, sorted; left: the importers past the cap, sorted } */
+export function pickTests(changed, tests, read, max = Infinity, impact = null) {
   const ch = new Set(changed.map(fwd)), stems = [...ch].map(stemOf).filter(Boolean), fx = [...ch].map(fixtureOf).filter(Boolean);
   const close = [], importers = [];
   for (const t of tests.map(fwd)) {
@@ -105,7 +106,7 @@ export function pickTests(changed, tests, read, max = Infinity) {
     if (fx.some(k => text.includes(k))) { close.push(t); continue; }
     const rd = readsOf(text);
     if (rd.length && [...ch].some(f => readsMatch(rd, f))) { close.push(t); continue; }
-    const n = importsOf(t, text).filter(f => ch.has(f)).length;
+    const n = importsOf(t, text).filter(f => ch.has(f)).length + [...ch].filter(f => impact?.recorded?.[f]?.[t]).length;
     if (n) importers.push({ t, n });
   }
   importers.sort((a, b) => b.n - a.n || a.t.localeCompare(b.t));
