@@ -174,7 +174,12 @@ function paintOrc() {
 // NORN-UI-NAV: the bar and the More sheet (shell.mjs) paint from the static page list - at boot, before any fetch - and repaint when the
 // needs count or a Health state lands; the strip paints "…" until /api/strip answers
 const health = () => healthStates({ usage: S.usage, rows: S.guard?.rows ?? null });
-function paintNav() { const o = { project: S.project, needs: S.needs, health: health(), open: !!S.moreOpen }; $('#tabs').outerHTML = renderBar(S.tab, o); $('#more-sheet').outerHTML = renderMore(S.tab, o); $('#tab-settings').outerHTML = renderCog(S.tab, o); }
+// a repaint swaps the nodes (outerHTML): a focused tab, More or sheet link would drop the focus to <body> (CI-45772325077: a stream
+// poke right after Escape took it from More), so the element with the same id, or the sheet link with the same href, takes it back
+function paintNav() { const o = { project: S.project, needs: S.needs, health: health(), open: !!S.moreOpen }, a = document.activeElement;
+  const had = a?.closest?.('#tabs, #more-sheet, #tab-settings') ? (a.id ? '#' + CSS.escape(a.id) : a.getAttribute('href') ? `#more-sheet a[href="${CSS.escape(a.getAttribute('href'))}"]` : null) : null;
+  $('#tabs').outerHTML = renderBar(S.tab, o); $('#more-sheet').outerHTML = renderMore(S.tab, o); $('#tab-settings').outerHTML = renderCog(S.tab, o);
+  if (had && !a.isConnected) document.querySelector(had)?.focus(); }
 // the page cards that read the strip (Lanes onboarding): repainted in place when a newer strip lands, never the page
 function paintStripCards() { const c = $('#strip-cards'); if (c) c.outerHTML = stripCards(S.tab, S.ov ?? null); }
 function paintStrip() { $('#status-strip').outerHTML = S.project ? renderStatus(S.ov ?? null, { look: look(), project: S.project }) : '<div class="sstrip" id="status-strip" hidden></div>'; }
