@@ -18,7 +18,7 @@ import path from 'node:path';
 import { classify } from './testcmd.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
 import { isBrowserTest, importsOf, pickTests, readsOf, readsMatch } from './cisuite.mjs';
-import { workInit, onWork } from './progress.mjs';
+import { workInit, onWork, resultText } from './progress.mjs';
 import { TIMES_FILE, IMPACT_FILE } from './testtimes.mjs';
 import { fwd } from './config.mjs';
 import { readText } from './fsnap.mjs';
@@ -50,6 +50,8 @@ const offDeny = () => `tests do not run in a run of this project (policy.tests.m
 // DEC-a-651 Q4 (lean-suite SPEC section 10): past the budget, ONE test command per run whose files all FAILED earlier in the run still
 // runs, so a worker can rerun the file it is fixing. Until RM-26 S3 lands; the controller removes it then.
 const RERUNS = 1;
+const pastBudget = (t, ms) => t.run_budget_min > 0 && Number.isFinite(ms) && ms >= t.run_budget_min * 60000;
+const rerunOk = (r, failed, reruns) => reruns < RERUNS && r.kind === 'test' && r.files.length > 0 && r.files.every(f => failed.includes(f));
 const budgetDeny = (ms, t, failed, reruns) => `this run has spent ${(ms / 60000).toFixed(1)} min in tests, past its budget (policy.tests.run_budget_min = ${t.run_budget_min}): stop testing and finish - commit, write your NOTES, \`norn done\`. `
   + (reruns >= RERUNS ? 'Its one rerun of a file that failed earlier in this run is spent. ' : failed.length ? `Past it only ONE rerun of files that failed earlier in this run passes: \`norn tests run ${failed.join(' ')}\`. ` : '') + CI;
 const browserDeny = files => `${files.join(' ')} hold${files.length === 1 ? 's' : ''} browser (page) tests, which never run in a lane run (policy.tests.browser = ci; ${CI}): \`norn tests run ${files.join(' ')}\` runs the other tests of the file with the browser ones skipped`;
@@ -67,8 +69,7 @@ export function testsCheck(cmd, t, { testMs = null, failed = [], reruns = 0, cwd
   if (r.kind !== 'test' && r.kind !== 'full') return null;
   if (r.kind === 'full' && t.full_suite === 'deny') return fullSuiteDeny(r);
   if (t.mode === 'off') return offDeny();
-  if (t.run_budget_min > 0 && Number.isFinite(testMs) && testMs >= t.run_budget_min * 60000
-    && !(reruns < RERUNS && r.kind === 'test' && r.files.length && r.files.every(f => failed.includes(f)))) return budgetDeny(testMs, t, failed, reruns);
+  if (pastBudget(t, testMs) && !rerunOk(r, failed, reruns)) return budgetDeny(testMs, t, failed, reruns);
   if (testsFree(t) || (r.runner !== 'node' && r.runner !== 'ci-suite')) return null;
   if (t.browser === 'ci' && r.runner === 'node') {
     const br = (r.paths || []).filter(p => isBrowserTest(read(path.resolve(cwd, p))));
@@ -89,7 +90,6 @@ function unionMs(calls) {
 }
 // a `norn tests run` result line per file it ran or reused (testscli.mjs): "pass tests/a.test.mjs 2.1 s" | "FAIL tests/a.test.mjs ..."
 const RESULT = /^(pass|FAIL) \S*?([\w.-]+\.test\.[cm]?[jt]s)\b/gm;
-const resultText = b => typeof b.content === 'string' ? b.content : Array.isArray(b.content) ? b.content.map(x => x?.text ?? '').join('\n') : '';
 /**
  * a transcript's test facts -> { ms: the wall time of its finished test calls, failed: the test file names a `norn tests run` reported
  * FAIL, reruns: the test calls that started with ms already at budgetMs and ran files (a refused one prints no result line) }

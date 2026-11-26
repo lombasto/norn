@@ -268,7 +268,7 @@ test('DEC-a-651 Q4: past the budget the hook lets ONE rerun of a file that faile
   const lines = [], add = (...l) => { lines.push(...l); fs.writeFileSync(tr, lines.join('\n') + '\n'); };
   const hook = command => {
     const r = spawnSync(process.execPath, [META, 'scope', 'check', '--run', 'RUN-1', '--state', w.state],
-      { input: JSON.stringify({ session_id: 'S', hook_event_name: 'PreToolUse', transcript_path: tr, ...bash(command, w.wt) }), encoding: 'utf8', env: { ...process.env, META_RUN_ID: 'RUN-1' } });
+      { input: JSON.stringify({ session_id: 'S', hook_event_name: 'PreToolUse', transcript_path: tr, ...bash(command, w.wt) }), encoding: 'utf8', windowsHide: true, env: { ...process.env, META_RUN_ID: 'RUN-1' } });
     assert.equal(r.status, 0, r.stderr);
     return r.stdout.trim() ? JSON.parse(r.stdout).hookSpecificOutput.permissionDecisionReason : null;
   };
