@@ -180,6 +180,18 @@ const withRecorder = opts => (String(opts ?? '').includes(READREC) ? opts : `${o
 const resFile = (dir, key) => path.join(dir, `${key}.json`), lockFile = (dir, key) => path.join(dir, `${key}.lock`);
 /** the reusable result of a key: a pass younger than RESULT_TTL_MS, else null */
 export function freshPass(dir, key, now = Date.now()) { const r = readJson(resFile(dir, key)); return r?.ok === true && now - Date.parse(r.at) < RESULT_TTL_MS ? r : null; }
+/** NORN-IMPACT-READS: per test file of `tests` its newest stored pass younger than RESULT_TTL_MS that has a record -> { key, at, files:
+ *  the repo files it read }. A stale pass, a fail and a pass of a file not in `tests` (gone) give nothing: testindex impactOf's read edges */
+export function recordedReads(dir, tests, now = Date.now()) {
+  const want = new Set(tests), out = {};
+  let names = []; try { names = fs.readdirSync(dir).filter(n => /^[0-9a-f]{40}\.json$/.test(n)); } catch { return out; /* no cache yet: nothing recorded */ }
+  for (const n of names) {
+    const r = freshPass(dir, n.slice(0, 40), now);
+    if (!r?.reads || !want.has(r.file) || (out[r.file] && out[r.file].at >= r.at)) continue;
+    out[r.file] = { key: n.slice(0, 40), at: r.at, files: Object.keys(r.reads.files ?? {}).filter(p => r.reads.files[p] !== '<missing>') };
+  }
+  return out;
+}
 function writeResult(dir, key, r) { const f = resFile(dir, key), t = `${f}.${process.pid}.tmp`; fs.writeFileSync(t, JSON.stringify(r)); fs.renameSync(t, f); }
 /** take the key's run lock -> { held, release } | { held: false, holder } (a stale lock is taken over) */
 function takeLock(dir, key, me, { alive, start } = {}) {
