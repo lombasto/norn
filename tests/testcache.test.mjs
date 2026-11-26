@@ -193,7 +193,8 @@ test('a pass records the repo files its test and node children read: reused whil
   };
   assert.deepEqual([await go('RUN-1', 'first'), await go('RUN-2', 'again'), starts()], ['ran', 'reused', 1]);
   const rec = freshPass(dir, k0).reads;
-  assert.deepEqual(Object.keys(rec.files), ['data/child.txt', 'data/opt.json', 'data/x.json'], 'the test and its imports (in the key), state/, ignored and outside files are left out');
+  assert.deepEqual(Object.keys(rec.files), ['data/child.txt', 'data/opt.json', 'data/x.json', 'engine/kid.mjs'],
+    'the child script (named by path: in no key) is in; the test and its imports (in the key), state/, ignored and outside files are left out');
   assert.equal(rec.files['data/opt.json'], '<missing>');
   assert.deepEqual(Object.keys(rec.dirs), ['data']);
   put('data/x.json', '{"a":2}\n');
