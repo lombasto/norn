@@ -4,7 +4,8 @@
 //   key      (test file, sha256 of the file + every module it reaches - relative imports, transitively; a script it names (`'norn.mjs'`,
 //            a unique engine/ or tests/helpers basename: a test that spawns the CLI depends on all of it); a tests/fixtures/<dir> it names;
 //            every repo file its `// reads:` header matches (DEC-a-648: the non-JS files it reads - a workflow, a doc - path + content,
-//            a gone one as missing; a glob matches the files git lists as listed, vendored ones too, never the top-level state/: readsFiles) -
+//            a gone one as missing; a glob matches the files git lists as listed, vendored ones too, never the top-level state/: readsFiles;
+//            in a git repo a listing git cannot give after 3 tries is an Error, never a walk: repoFiles) -
 //            the node version, `extra`: the browser mode and extra node flags). keyOf. It holds no data file engine code reads for the
 //            test (a preset, a schema, a prompt): the result's `reads` does (DEC-a-658).
 //   result   <dir>/<key>.json { ok, ms, at, run, file, counts, cases, reads }: a PASS younger than a day is reused - the file does not run
@@ -51,22 +52,36 @@ function walk(root, rel, out) {
   for (const e of es) { const r = rel ? `${rel}/${e.name}` : e.name; if (e.isDirectory()) { if (!skipped(r)) walk(root, r, out); } else out.push(r); }
   return out;
 }
+const GIT_TRIES = 3, GIT_PAUSE_MS = 250;   // a failed git ls-files is retried after a short pause, then repoFiles throws
 /** every file of the repo a reads glob may match: the files git lists (tracked, plus untracked and not ignored) as listed - a tracked
- *  vendor/ file too (engine/dash/vendor/: lint and layout read every tracked file) - but the top-level state/; in a folder that is no
- *  git repo (the tests' temp repos) a walk, which skips state/, node_modules, vendor, target and .git */
-function repoFiles(root) {
-  const r = boundedSync('git', ['-C', root, 'ls-files', '-co', '--exclude-standard', '-z'], { timeout: 60000 });   // windowsHide: boundedSync sets it
-  const listed = !r.error && r.status === 0 ? String(r.stdout).split('\0').filter(Boolean).map(fwd).filter(f => !f.startsWith('state/')) : walk(root, '', []).filter(f => !skipped(f));
-  return [...new Set(listed)].sort();
+ *  vendor/ file too (engine/dash/vendor/: lint and layout read every tracked file) - but the top-level state/. In a git repo that list or
+ *  nothing: git ls-files is tried GIT_TRIES times, then this throws (the walk never enters vendor/: foldReads would drop a vendored file
+ *  a test read and store that pass under its normal key). Only a folder with no .git in or above it (the tests' temp repos) is walked,
+ *  skipping state/, node_modules, vendor, target and .git. git: boundedSync's shape (a test injects a failing one) */
+function repoFiles(root, git = boundedSync) {
+  if (!inGitRepo(root)) return [...new Set(walk(root, '', []).filter(f => !skipped(f)))].sort();
+  let r;
+  for (let i = 1; i <= GIT_TRIES; i++) {
+    r = git('git', ['-C', root, 'ls-files', '-co', '--exclude-standard', '-z'], { timeout: 60000 });   // windowsHide: boundedSync sets it
+    if (!r.error && r.status === 0) return [...new Set(String(r.stdout).split('\0').filter(Boolean).map(fwd).filter(f => !f.startsWith('state/')))].sort();
+    if (i < GIT_TRIES) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, GIT_PAUSE_MS);
+  }
+  const first = String(r.stderr ?? '').split(/\r?\n/).map(l => l.trim()).find(Boolean);
+  throw new Error(`git ls-files in ${root} failed ${GIT_TRIES} times (status ${r.status ?? 'none'}${r.error ? `, ${r.error.code ?? r.error.message}` : ''}${first ? `: ${first}` : ''}): no file listing, so no test result`);
+}
+/** a .git entry (a folder, or a worktree's file) in root or a folder above it */
+function inGitRepo(root) {
+  for (let d = path.resolve(root); ; d = path.dirname(d)) { if (fs.existsSync(path.join(d, '.git'))) return true; if (path.dirname(d) === d) return false; }
 }
 /** the files a test can reach in a repo: o.read(rel) -> text | null (cached per call of keyOf's caller), the module index by basename,
- *  o.files() -> the repo's files (repoFiles, listed once per index: only a reads header asks for it) */
-export function repoIndex(root) {
+ *  o.files() -> the repo's files (repoFiles, listed once per index: a reads header and a pass's recorded reads ask for it; it throws when
+ *  git cannot list a git repo). git: the git call (tests) */
+export function repoIndex(root, { git } = {}) {
   const mods = new Map();
   for (const f of [...walk(root, 'engine', []), ...walk(root, 'tests/helpers', [])].filter(f => /\.[cm]?js$/.test(f))) { const b = f.split('/').pop(); mods.set(b, mods.has(b) ? null : f); }
   const text = new Map();
   let files = null;
-  return { root, mods, files: () => (files ??= repoFiles(root)),
+  return { root, mods, files: () => (files ??= repoFiles(root, git)),
     read: rel => { if (!text.has(rel)) { let t = null; try { t = fs.readFileSync(path.join(root, rel), 'utf8'); } catch { /* gone: hashed as missing */ } text.set(rel, t); } return text.get(rel); } };
 }
 /** the repo files test file `file` declares in its `// reads:` header (cisuite readsOf), sorted: a glob without a wildcard is its path
