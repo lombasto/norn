@@ -4,9 +4,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { ROLES, record, readEvents, fold, loadState, withLock, RecordError, recordsFile } from '../engine/lib/records.mjs';
+import { ROLES, record, readEvents, fold, loadState, withLock, withLockAsync, RecordError, recordsFile } from '../engine/lib/records.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -235,6 +235,42 @@ test('lock: exclusive, breaks a stale lock (> 10 s), released after a throw', ()
   assert.equal(fs.existsSync(lk), false);
   fs.writeFileSync(lk, JSON.stringify({ pid: 1, ts: new Date().toISOString() }));
   assert.throws(() => withLock(lk, () => 1, { timeoutMs: 200 }), /lock/);
+});
+
+// NORN-LOCK-DEAD-PID: a lock whose holder pid runs no more on this host is broken at once; a live holder / another host waits staleMs
+const deadPid = () => { const r = spawnSync(process.execPath, ['-e', ''], { stdio: 'ignore', windowsHide: true }); assert.equal(r.status, 0); return r.pid; };
+const lockAt = (lk, o) => fs.writeFileSync(lk, JSON.stringify({ ts: new Date().toISOString(), start: Date.now(), ...o }));
+for (const [name, wl] of [['withLock', (lk, o) => withLock(lk, () => 7, o)], ['withLockAsync', (lk, o) => withLockAsync(lk, async () => 7, o)]]) {
+  test(`${name}: a fresh lock left by a pid that is not running on this host is broken at once`, async () => {
+    const lk = path.join(tmp(), 'home.lock'); lockAt(lk, { pid: deadPid(), host: os.hostname() });
+    const t0 = Date.now();
+    assert.equal(await wl(lk, { staleMs: 60000, timeoutMs: 5000 }), 7);
+    assert.ok(Date.now() - t0 < 2000, `took ${Date.now() - t0} ms`);
+    assert.equal(fs.existsSync(lk), false);
+  });
+  test(`${name}: a lock held by a live pid on this host is not broken before staleMs`, async () => {
+    const lk = path.join(tmp(), 'home.lock'); lockAt(lk, { pid: process.pid, host: os.hostname() });
+    await assert.rejects(async () => wl(lk, { staleMs: 60000, timeoutMs: 300 }), /lock busy/);
+    assert.equal(JSON.parse(fs.readFileSync(lk, 'utf8')).pid, process.pid);
+    lockAt(lk, { pid: process.pid, host: os.hostname(), ts: new Date(Date.now() - 61000).toISOString() });
+    assert.equal(await wl(lk, { staleMs: 60000, timeoutMs: 5000 }), 7);   // past staleMs: the age rule as before
+  });
+  test(`${name}: another host's record (or none) waits for staleMs even when its pid is not running here`, async () => {
+    const lk = path.join(tmp(), 'home.lock'), pid = deadPid();
+    for (const o of [{ pid, host: os.hostname() + '-other' }, { pid }]) {
+      lockAt(lk, o);
+      await assert.rejects(async () => wl(lk, { staleMs: 60000, timeoutMs: 300 }), /lock busy/);
+      lockAt(lk, { ...o, ts: new Date(Date.now() - 61000).toISOString() });
+      assert.equal(await wl(lk, { staleMs: 60000, timeoutMs: 5000 }), 7);
+    }
+  });
+}
+test('lock: the record names its holder (pid, ts, host, start)', () => {
+  const lk = path.join(tmp(), 'home.lock');
+  const r = withLock(lk, () => JSON.parse(fs.readFileSync(lk, 'utf8')));
+  assert.equal(r.pid, process.pid); assert.equal(r.host, os.hostname());
+  assert.ok(Number.isInteger(r.start) && Math.abs(r.start - (Date.now() - process.uptime() * 1000)) < 1000);
+  assert.ok(Number.isFinite(Date.parse(r.ts)));
 });
 
 test('8 processes x 50 appends -> 400 lines, unique consecutive seq, unique ids, no torn lines', async () => {
