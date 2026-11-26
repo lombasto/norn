@@ -20,7 +20,6 @@ Norn; renaming them is its own change (every caller, test and doc at once).
 | `META_NO_TICK` | `engine/bin/norn.mjs` | no tick and no overlap check when a run ends (tests) |
 | `NORN_GIT_PROFILE` | `engine/lib/gitprof.mjs` | a file: every git child of a Norn process (and of its child processes) is counted with its verb, wall time and call site, one JSON line per process appended at exit (profiling; off by default) |
 | `NORN_CENSUS_NODE` | the `ci-suite --census` preload (`engine/lib/cisuite.mjs` CENSUS_PRELOAD) | a file: every node process of a test file appends its pid (the per-file `node_procs`); set by ci-suite per file |
-| `NODE_OPTIONS` | `engine/lib/cisuite.mjs` censusEnv | node's own options variable: `ci-suite --census` keeps the caller's value and appends its `--require` census preload (an outer census preload replaced) |
 | `NORN_HOOK_MAX_MS` | `engine/lib/mail.mjs` | the time limit in ms of the `mail check --inject` hook before its watchdog ends it (default 20000; tests) |
 | `META_INTERACTIVE` | setup | `1`: treat stdin as a terminal (guided setup without a TTY) |
 | `META_TAILSCALE` | `engine/lib/remote.mjs` | the path of the tailscale binary |
