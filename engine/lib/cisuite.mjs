@@ -135,8 +135,9 @@ export function timeRow(file, wallMs, lines) {
 function censusPreload() {
   const fs = require('node:fs'), path = require('node:path'), cp = require('node:child_process'), { isMainThread } = require('node:worker_threads');
   // its own fs references, taken before any test runs: a test that patches fs (dash-async-census.test.mjs counts sync fs calls per route)
-  // never sees the census's appends
-  const append = fs.appendFileSync, exists = fs.existsSync;
+  // never sees the census's appends (not appendFileSync: node's calls the exported writeFileSync, CI 45766140327)
+  const { openSync, writeSync, closeSync, existsSync: exists } = fs;
+  const append = (f, s) => { const fd = openSync(f, 'a'); try { writeSync(fd, s); } finally { closeSync(fd); } };
   if (isMainThread && process.env.NORN_CENSUS_NODE) try { append(process.env.NORN_CENSUS_NODE, `${process.pid}\n`); } catch {}
   const LOG = process.env.NORN_CENSUS_SPAWN;
   if (!LOG) return;
