@@ -19,6 +19,7 @@ import { renderDigest } from '../engine/lib/views.mjs';
 import { settled } from './helpers/settled.mjs';
 import { waitFor } from './helpers/wait.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
+import { fastRepo } from './helpers/git-fast.mjs';
 import { resolveShim } from '../engine/lib/paths.mjs';
 
 const NORN = path.join(import.meta.dirname, '..', 'engine', 'bin', 'norn.mjs');
@@ -37,11 +38,7 @@ function writeTree(dir, files) {
 /** a repo: main = base files, feat/x = head files (files absent from head are deleted) */
 function fixtureRepo({ base, head }) {
   const dir = mkTmp('meta-slop-');
-  git(dir, 'init', '-q', '-b', 'main'); git(dir, 'config', 'user.email', 't@t'); git(dir, 'config', 'user.name', 't'); git(dir, 'config', 'core.autocrlf', 'false');
-  writeTree(dir, base); git(dir, 'add', '-A'); git(dir, 'commit', '-q', '--allow-empty', '-m', 'base');
-  git(dir, 'checkout', '-q', '-b', 'feat/x');
-  for (const f of Object.keys(base)) if (!(f in head)) fs.rmSync(path.join(dir, f));
-  writeTree(dir, head); git(dir, 'add', '-A'); git(dir, 'commit', '-q', '--allow-empty', '-m', 'head');
+  fastRepo(dir, [{ ref: 'main', msg: 'base', files: base }, { ref: 'feat/x', from: 0, deleteall: true, msg: 'head', files: head }], { head: 'feat/x', autocrlf: false });
   return dir;
 }
 /** a state folder whose stored code signals (<state>/code/signals.json, docs/code-signals.md) hold a fixture's files (K27) */
@@ -206,17 +203,16 @@ test('run end: a fake lane run that ends DONE with a BLOCK finding is resumed ON
 });
 
 const gitAt = (cwd, iso, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_DATE: iso, GIT_COMMITTER_DATE: iso } }); if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
+const epoch = iso => Date.parse(iso) / 1000;
 const lines = n => Array.from({ length: n }, (_, i) => `l${i}`).join('\n') + '\n';
 
 test('loc: non-blank lines by git per class (generated, vendored, fixtures apart), area and language; one point per day; churn per landing + the big flag', () => {
   const repo = mkTmp('meta-slop-loc-');
-  git(repo, 'init', '-q', '-b', 'main'); git(repo, 'config', 'user.email', 't@t'); git(repo, 'config', 'user.name', 't');
-  writeTree(repo, { 'engine/lib/a.mjs': 'const a = 1;\n\n  \nexport { a };\nlet b;\n', 'tests/a.test.mjs': lines(2), 'README.md': '# r\n\n', 'cfg.json': '{}\n',
-    'engine/dash/vendor/v.js': lines(5), 'tests/fixtures/f.txt': lines(4), 'package-lock.json': lines(3) });
-  git(repo, 'add', '-A'); gitAt(repo, '2026-10-30T10:00:00Z', 'commit', '-q', '-m', 'first');
-  git(repo, 'checkout', '-q', '-b', 'feat/big');
-  writeTree(repo, { 'engine/lib/b.mjs': lines(2000) }); git(repo, 'add', '-A'); gitAt(repo, '2026-11-01T09:00:00Z', 'commit', '-q', '-m', 'big');
-  git(repo, 'checkout', '-q', 'main'); gitAt(repo, '2026-11-01T10:00:00Z', 'merge', '-q', '--no-ff', '-m', 'merge: feat/big', 'feat/big');
+  fastRepo(repo, [
+    { ref: 'main', msg: 'first', at: epoch('2026-10-30T10:00:00Z'), files: { 'engine/lib/a.mjs': 'const a = 1;\n\n  \nexport { a };\nlet b;\n', 'tests/a.test.mjs': lines(2), 'README.md': '# r\n\n', 'cfg.json': '{}\n',
+      'engine/dash/vendor/v.js': lines(5), 'tests/fixtures/f.txt': lines(4), 'package-lock.json': lines(3) } },
+    { ref: 'feat/big', from: 0, msg: 'big', at: epoch('2026-11-01T09:00:00Z'), files: { 'engine/lib/b.mjs': lines(2000) } },
+    { ref: 'main', from: 0, merge: [1], msg: 'merge: feat/big', at: epoch('2026-11-01T10:00:00Z'), files: { 'engine/lib/b.mjs': lines(2000) } }]);
   const r = locReport(repo, { since: '2026-10-30', until: '2026-11-01' });
   assert.deepEqual(r.totals, { code: 2003, tests: 2, docs: 1, config: 1 });
   assert.deepEqual(r.apart, { generated: 3, vendored: 5, fixtures: 4 });
@@ -262,9 +258,8 @@ test('sweep: merge-tree sorts branches real / empty / conflicting / merged; dead
 test('daily: the tick starts `norn slop daily` once a day; the report has absolute numbers beside every %, and the digest carries ONE slop line', () => {
   const state = mkTmp('meta-slop-day-'), root = path.dirname(path.dirname(state)), repo = path.join(root, 'repo');
   fs.mkdirSync(repo);
-  git(repo, 'init', '-q', '-b', 'main'); git(repo, 'config', 'user.email', 't@t'); git(repo, 'config', 'user.name', 't');
-  writeTree(repo, { 'engine/lib/a.mjs': lines(100) }); git(repo, 'add', '-A'); gitAt(repo, '2026-10-30T10:00:00Z', 'commit', '-q', '-m', 'a');
-  writeTree(repo, { 'engine/lib/a.mjs': lines(150), 'tests/a.test.mjs': lines(10) }); git(repo, 'add', '-A'); gitAt(repo, '2026-11-08T10:00:00Z', 'commit', '-q', '-m', 'more');
+  fastRepo(repo, [{ ref: 'main', msg: 'a', at: epoch('2026-10-30T10:00:00Z'), files: { 'engine/lib/a.mjs': lines(100) } },
+    { ref: 'main', from: 0, msg: 'more', at: epoch('2026-11-08T10:00:00Z'), files: { 'engine/lib/a.mjs': lines(150), 'tests/a.test.mjs': lines(10) } }]);
   const now = Date.parse('2026-11-09T06:00:00Z'), p = { name: 'kestrel', file: path.join(root, 'project.json'), root: repo, policy: {} };
   const spawned = [], spawnFn = (exe, args) => { spawned.push(args); return { pid: 42 }; };
   assert.equal(tickSlop(p, state, { metaCmd: NORN, spawnFn, now }), 'slop daily: started pid 42');
