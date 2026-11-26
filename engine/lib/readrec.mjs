@@ -5,8 +5,8 @@
 //   wraps    fs's calls that read a file or list a folder (and fs.promises'), then syncBuiltinESMExports so named imports see them; a
 //            wrapper keeps its name and passes arguments, `this` and the result through. An open counts only with read flags.
 //   record   <DIR>/<pid>-<random>.txt, one line per NEW path: `F\t<abs>` a file read (or tried: a missing one counts), `D\t<abs>` a
-//            folder listed. One descriptor, written with writeSync: a child that is killed keeps what it read until then (no exit
-//            handler). The file is made at load, empty while nothing is read: no file at all = the recorder did not load.
+//            folder listed. One descriptor, written with writeSync: the record of a killed child holds every read it made before the
+//            kill (no exit handler). The file is made at load, empty while nothing is read: no file at all = the recorder did not load.
 //   skips    anything outside ROOT (win32: without case) or ROOT itself, .git/, node_modules/ at any depth, the top-level state/, a path
 //            it cannot name (a file descriptor, a bad URL). It never throws into its host.
 // Only node: builtins: every node child of a test loads it.
