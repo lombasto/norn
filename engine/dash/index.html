@@ -252,6 +252,7 @@ async function render(force = false, why = []) {
   try {
     if (threadOnly(why, S.tab) && $('#thread')) { await paintThread(); return; }   // META-HOME-POLISH R1: a chat line repaints the thread only
     const re = refetchFor(S.tab, why); if (!re.page) { if (re.strip) await header(); return; }   // NORN-UI-NAV: a pulse = the strip only
+    if (!why.length) sched.drop();   // dash-latency: this direct render's fetches leave after the waiting pokes, so they cover them (one strip fetch)
     // dash-latency: the header and the tab load at once (they were a waterfall: the header's /api/overview, then the tab's), and one
     // render fetches a URL once; a render a newer one
     // overtook (a click while a slow fetch was out) never paints

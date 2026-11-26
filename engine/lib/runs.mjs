@@ -1251,8 +1251,9 @@ export const readiness = (state, o = {}) => walkQueue(state, { ...o, act: null }
 // that is ready or waits only for capacity (cap, resources) is waiting for a slot.
 const CAPACITY_TERM = /^(cap[: ]|resources: )/;
 const lastStart = runs => Math.max(0, ...runs.filter(r => r.kind === 'run' && r.history?.[0]?.ev === 'start' && onClaudeCap(r.data)).map(r => Date.parse(r.created) || 0));
-// a row the merge reserve holds yields to the merges: it waits for no share (else a lane and a merge of two projects hold each other)
-const slotWaiting = r => r.account && (r.ready || (r.terms.length > 0 && r.terms.every(x => CAPACITY_TERM.test(x) && !x.includes('fill.merge_reserve'))));
+// a row the merge reserve holds yields to the merges: it waits for no share (else a lane and a merge of two projects hold each other);
+// a merge ready in the merge slot waits for no normal slot (claudeLive: the merge slot is no project's share)
+const slotWaiting = r => r.account && !r.merge_slot && (r.ready || (r.terms.length > 0 && r.terms.every(x => CAPACITY_TERM.test(x) && !x.includes('fill.merge_reserve'))));
 /** { project: { n, since } } of the projects beside `state` that have queued Claude runs waiting only for a slot */
 export function slotWaiters(state, o = {}) {
   const out = {}, here = path.resolve(state);
@@ -1341,7 +1342,7 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
     if (rr) { row.terms.push(rr); continue; }
     // META-AUTH: last - only a launch that would go now probes / takes the canary (a held row must not spend the one launch)
     { const a = authGate(spec, { now, probe: authProbe, dry: !act }); if (a) { row.terms.push(a); continue; } }
-    row.ready = true;
+    row.ready = true; if (slot) row.merge_slot = true;
     if (!act) { pending.push(startFields(spec, info)); landing.delete(q.id); continue; }
     let next;
     try { next = act.start(q, spec); }

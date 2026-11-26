@@ -31,6 +31,8 @@ function machine(budget) {
     p.live = (stage = 'BUILD') => { const id = record(state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'fake', lane: `${name}-live-${++n}`, stage, worktree: 'w', brief } }).id;
       fs.mkdirSync(path.join(state, 'hb'), { recursive: true }); fs.writeFileSync(hbPath(state, id), JSON.stringify({ run: id })); return id; };
     p.row = (id, res = COOL) => readiness(state, { resources: () => res }).find(r => r.id === id);
+    // the records' second-resolution ts decide who waited longest (the fair share): backdate them, never lean on the wall clock
+    p.backdate = ms => { const f = path.join(state, 'runs.jsonl'); fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace(/"ts":"([^"]+)"/g, (_, ts) => `"ts":"${new Date(Date.parse(ts) - ms).toISOString().slice(0, 19)}Z"`)); };
     return p;
   };
   return { t, project };
@@ -88,9 +90,10 @@ test('reserve across projects: a merge waiting in project B is reserved against 
   const m = machine({ max_claude_workers: 3, merge_workers: 1 });
   const a = m.project('norn'), b = m.project('shack');
   a.live(); a.live();
-  const bm = b.queue({ stage: 'MERGE' });
+  const bm = b.queue({ stage: 'MERGE' }); b.backdate(60e3);   // B's merge has waited a minute longer: the merge slot is no share
   const lane = a.queue({ stage: 'BUILD' });
-  assert.equal(a.row(lane).ready, true, 'the merge slot is free: B\'s merge goes there, A\'s lane takes the last normal slot');
+  assert.deepEqual(a.row(lane).terms, []);
+  assert.equal(a.row(lane).ready, true,'the merge slot is free: B\'s merge goes there, A\'s lane takes the last normal slot');
   b.live('MERGE');   // the merge slot taken: B's waiting merge now needs a normal slot
   assert.match(a.row(lane).terms.join(), /^cap: 3 claude workers running, budget max_claude_workers=3: 1 slot\(s\) kept for the queued merges \(fill\.merge_reserve\)$/);
   assert.equal(b.row(bm).ready, true, 'B\'s merge takes the kept slot');
