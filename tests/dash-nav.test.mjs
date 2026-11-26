@@ -222,6 +222,9 @@ test('the browser: ?tab=runs&run=RUN-n opens that run\'s document and feed, a re
     assert.ok(await pg.until(`!document.querySelector('#more-sheet').hidden`), 'More opens');
     await pg.ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
     assert.ok(await pg.until(`document.querySelector('#more-sheet').hidden && document.activeElement?.id === 'tab-more'`), 'Escape closes it, focus back on More');
+    // CI-45772325077: a render landing after Escape (a stream poke; here a same-URL popstate) repaints the bar; More keeps the focus
+    await pg.ev(`window.oldMore = document.querySelector('#tab-more'); dispatchEvent(new PopStateEvent('popstate'))`);
+    assert.ok(await pg.until(`document.querySelector('#tab-more') !== window.oldMore && document.activeElement?.id === 'tab-more'`), 'a repaint of the bar keeps the focus on More');
   } finally { await pg.close(); await f.done(); }
 });
 
