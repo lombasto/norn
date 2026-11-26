@@ -217,7 +217,7 @@ test('a pass records the repo files its test and node children read: reused whil
 
 // task-NORN-TEST-RECORD-S2 (DEC-a-658): one `git ls-files` that failed once made repoFiles return the walk (no vendor/): foldReads dropped
 // the vendored files a test read and stored that pass under its normal key. In a git repo the listing is git's or an Error, never the walk.
-const gitFake = fails => { const calls = []; return { calls, git: (file, args, opts) => { calls.push(args); return calls.length <= fails ? { status: 128, stdout: '', stderr: 'fatal: index.lock busy\nmore\n', error: null } : { status: 0, stdout: 'engine/dash/vendor/x.js\0tests/a.test.mjs\0', stderr: '' }; } }; };
+const gitFake = fails => { const calls = []; return { calls, git: (file, args) => { calls.push(args); return calls.length <= fails ? { status: 128, stdout: '', stderr: 'fatal: index.lock busy\nmore\n', error: null } : { status: 0, stdout: 'engine/dash/vendor/x.js\0tests/a.test.mjs\0', stderr: '' }; } }; };
 test('in a git repo the file listing is git\'s or an Error after 3 tries, never the walk; a folder with no .git above it is walked', () => {
   const w = world();
   execFileSync('git', ['init', '-q'], { cwd: w.root, stdio: 'ignore', windowsHide: true });
