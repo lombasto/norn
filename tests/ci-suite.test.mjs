@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { parseKnown, judge, suiteEnv, pickTests, importsOf } from '../engine/lib/cisuite.mjs';
+import { parseKnown, judge, suiteEnv, pickTests, importsOf, timeRow, censusEnv } from '../engine/lib/cisuite.mjs';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
 import { skipWhy } from './helpers/cdp.mjs';
 
@@ -155,6 +155,58 @@ test('ci-suite: each file prints "start <file>"; a file past --file-cap is kille
   assert.doesNotMatch(r.stdout, /HANG RED: tests\/fixtures\/ci-suite-hang\/ok\.test\.mjs/);
   const bad = spawnSync(process.execPath, [CI, '--file-cap', '0', 'tests/fixtures/ci-suite-hang/ok.test.mjs'], { cwd: REPO, encoding: 'utf8' });
   assert.equal(bad.status, 2); assert.match(bad.stderr, /--file-cap/);
+});
+
+// ---------- RM-26 S0: the per-file time JSON (--json) and the process census (--census) ----------
+test('timeRow: cases_ms sums the top-level case lines only; outside_ms is the rest of the wall', () => {
+  assert.deepEqual(timeRow('tests/a.test.mjs', 1000.4, [{ top: 'a', ms: 100.2 }, { top: 'b', ms: 299.9 }, { file: null, name: 'b', nesting: 0 }]),
+    { file: 'tests/a.test.mjs', wall_ms: 1000, cases_ms: 400, outside_ms: 600, cases: 2 });
+  assert.deepEqual(timeRow('tests/b.test.mjs', 50, []), { file: 'tests/b.test.mjs', wall_ms: 50, cases_ms: 0, outside_ms: 50, cases: 0 });
+});
+
+test('ci-suite --json F: one row per file (wall_ms, cases_ms, outside_ms, cases, phase); the reds are judged as before', () => {
+  const out = path.join(mkTmp('meta-ci-json-'), 'sub', 'times.json');
+  const r = spawnSync(process.execPath, [CI, '--known', `${FX}/known.txt`, '--json', out, `${FX}/*.test.mjs`], { cwd: REPO, encoding: 'utf8', windowsHide: true });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /ci-suite: 2 listed red\(s\), 0 new/);
+  const j = JSON.parse(fs.readFileSync(out, 'utf8'));
+  assert.equal(j.census, false); assert.equal(j.platform, process.platform);
+  assert.deepEqual(j.files.map(x => [x.file, x.phase, x.cases]), [['tests/fixtures/ci-suite/fx.test.mjs', 'parallel', 3]]);
+  const [x] = j.files;
+  assert.ok(x.wall_ms > 0 && x.cases_ms <= x.wall_ms && x.outside_ms === x.wall_ms - x.cases_ms, JSON.stringify(x));
+  assert.ok(!('git_procs' in x) && !('node_procs' in x), 'no census without --census');
+  for (const a of [['--census'], ['--json']]) {
+    const bad = spawnSync(process.execPath, [CI, ...a], { cwd: REPO, encoding: 'utf8', windowsHide: true });
+    assert.equal(bad.status, 2); assert.match(bad.stderr, /--census needs --json|--json needs a file/);
+  }
+});
+
+test('censusEnv: the caller\'s NODE_OPTIONS kept, an outer census preload replaced by this one (a process counts in the innermost census)', () => {
+  const e = censusEnv('--max-old-space-size=4096 --require="C:/t/a/census-preload.cjs"', 'C:/t/b/census-preload.cjs', 'C:/t/b/f.census');
+  assert.equal(e.NODE_OPTIONS, '--max-old-space-size=4096 --require="C:/t/b/census-preload.cjs"');
+  assert.equal(censusEnv(undefined, '/t/p.cjs', '/t/d').NODE_OPTIONS, '--require="/t/p.cjs"');
+  assert.equal(e.GIT_TRACE2_EVENT, path.join('C:/t/b/f.census', 'trace2'));
+});
+
+test('ci-suite --census: git_procs (GIT_TRACE2_EVENT, a file per git process) and node_procs (a --require preload) per file', () => {
+  // plain starts no process; spawns starts 2 git and 1 node more, the node one on a .txt entry as slop-fix.test.mjs's Done check does
+  // (CI 45728652472: an --import preload sent it through the ESM loader, ERR_UNKNOWN_FILE_EXTENSION)
+  const d = mkTmp('meta-ci-census-'), out = path.join(d, 'times.json'), fx = path.join(d, 'fx');
+  fs.mkdirSync(fx);
+  fs.writeFileSync(path.join(fx, 'chk.txt'), 'process.exit(0)\n');
+  fs.writeFileSync(path.join(fx, 'plain.test.mjs'), "import test from 'node:test';\ntest('census plain', () => {});\n");
+  fs.writeFileSync(path.join(fx, 'spawns.test.mjs'), "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { spawnSync } from 'node:child_process';\n" +
+    "test('census spawns: git twice', () => { for (let i = 0; i < 2; i++) assert.equal(spawnSync('git', ['--version']).status, 0); });\n" +
+    `test('census spawns: node once, on a .txt entry', () => { const r = spawnSync(process.execPath, [${JSON.stringify(path.join(fx, 'chk.txt'))}], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); });\n`);
+  const r = spawnSync(process.execPath, [CI, '--json', out, '--census', `${fx.split('\\').join('/')}/*.test.mjs`], { cwd: REPO, encoding: 'utf8', windowsHide: true, env: suiteEnv(process.env) });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const j = JSON.parse(fs.readFileSync(out, 'utf8')), [plain, spawns] = j.files;
+  assert.equal(j.census, true);
+  assert.deepEqual([plain.file, spawns.file].map(f => path.basename(f)), ['plain.test.mjs', 'spawns.test.mjs']);
+  assert.equal(plain.git_procs, 0, JSON.stringify(plain));
+  assert.ok(plain.node_procs >= 1, 'the file\'s own node --test process is counted');
+  assert.equal(spawns.git_procs - plain.git_procs, 2, JSON.stringify(j.files));
+  assert.equal(spawns.node_procs - plain.node_procs, 1, JSON.stringify(j.files));
 });
 
 // ---------- META-PR-FAST (RM-29): the fast PR job runs the test files a change touches ----------

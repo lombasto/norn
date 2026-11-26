@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // Run the node suite and fail only on a red NOT listed in tests/KNOWN-REDS.txt.
 // usage: node engine/bin/ci-suite.mjs [--known F] [--concurrency N] [--file-cap S] [--gate-wait MIN]
-//   [--changed BASE [--max N]] [glob ...]   (default: tests/KNOWN-REDS.txt, 3, FILE_CAP_S, GATE_WAIT_MIN, "tests/*.test.mjs", --max 20).
+//   [--changed BASE [--max N]] [--json F [--census]] [glob ...]   (default: tests/KNOWN-REDS.txt, 3, FILE_CAP_S, GATE_WAIT_MIN, "tests/*.test.mjs", --max 20).
 //   --changed BASE runs only the matched files the change BASE...HEAD touches (lib/cisuite.mjs pickTests: the
 //   fast PR job; the full suite runs after the merge and nightly); --max N caps the files picked only for importing a changed file.
+//   --json F writes one time row per file (lib/cisuite.mjs timeRow: wall_ms, cases_ms, outside_ms, cases) to F; --census adds per file
+//   the git and node processes it started (git_procs, node_procs: censusEnv). The census costs time: ci.yml runs it on a dispatch only.
 // The suite is one `node --test` per matched file, N at a time, plus a reporter that writes the reds; smoke.test.mjs
 // then runs alone (DEC-78). CI and the merge lanes call this script: it is the one home of the suite command.
 // exit 0 = no new red, 1 = a new red, a file that left a process alive or one past the wall cap (named on stdout), 2 = usage / the suite produced no result.
@@ -12,7 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { parseKnown, judge, suiteEnv, pickTests, isBrowserTest } from '../lib/cisuite.mjs';
+import { parseKnown, judge, suiteEnv, pickTests, isBrowserTest, timeRow, CENSUS_PRELOAD, censusEnv, censusCount } from '../lib/cisuite.mjs';
 import { procsNaming, leakText } from '../lib/testprocs.mjs';
 import { killTree } from '../lib/runs.mjs';
 import { listProcs } from '../lib/strays.mjs';
@@ -26,13 +28,15 @@ const argv = process.argv.slice(2), globs = [];
 // CI-HANG-B7F6833: the per-file wall cap - a file that has not exited by then is a hang: its process tree is killed, its output so
 // far printed and the suite fails naming it (a watchdog that turns a hang into a named red, well under the CI job's 60 min)
 const FILE_CAP_S = 600;
-let known = 'tests/KNOWN-REDS.txt', conc = '3', capS = FILE_CAP_S, gateWait = GATE_WAIT_MIN, changed = null, max = null;
+let known = 'tests/KNOWN-REDS.txt', conc = '3', capS = FILE_CAP_S, gateWait = GATE_WAIT_MIN, changed = null, max = null, json = null, census = false;
 for (let i = 0; i < argv.length; i++) {
   if (argv[i] === '--known') known = argv[++i];
   else if (argv[i] === '--gate-wait') gateWait = Number(argv[++i]);
   else if (argv[i] === '--changed') changed = argv[++i];
   else if (argv[i] === '--max') max = Number(argv[++i]);
   else if (argv[i] === '--concurrency') conc = argv[++i];
+  else if (argv[i] === '--json') json = argv[++i];
+  else if (argv[i] === '--census') census = true;
   else if (argv[i] === '--file-cap') capS = Number(argv[++i]);
   else if (argv[i].startsWith('--')) { console.error(`ci-suite: unknown flag ${argv[i]}`); process.exit(2); }
   else globs.push(argv[i]);
@@ -42,6 +46,8 @@ if (!(capS > 0)) { console.error('ci-suite: --file-cap needs a number of seconds
 if (!(gateWait >= 0)) { console.error('ci-suite: --gate-wait needs a number of minutes >= 0'); process.exit(2); }
 if (max != null && !changed) { console.error('ci-suite: --max needs --changed BASE'); process.exit(2); }
 if (max != null && !(max >= 0)) { console.error('ci-suite: --max needs a number of files >= 0'); process.exit(2); }
+if (json === undefined || json?.startsWith('--')) { console.error('ci-suite: --json needs a file'); process.exit(2); }
+if (census && !json) { console.error('ci-suite: --census needs --json F'); process.exit(2); }
 if (changed === undefined || changed?.startsWith('--')) { console.error('ci-suite: --changed needs a base ref'); process.exit(2); }
 
 let list;
@@ -74,6 +80,8 @@ if (!gate.held) console.log(`ci-suite: no machine gate lock taken (${gate.why})`
 // a project gate its files start runs under this suite's gate lock (META_GATE_HELD)
 const childEnv = { ...suiteEnv(process.env), ...gate.env };
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-suite-'));
+const preload = census ? path.join(tmp, 'census-preload.cjs') : null;
+if (preload) fs.writeFileSync(preload, CENSUS_PRELOAD);
 // fair-slots 5b / 6b: nothing a test file starts outlives the suite. Windows: the suite holds itself in a Job Object (jobguard.mjs,
 // KILL_ON_JOB_CLOSE) before the first file, so every process born below it - detached supervisors, headless Edge, orphans whose parent
 // already exited - dies when the suite ends however it ends (exit, crash, a hard kill of this process: its hold sees the exit). Any
@@ -89,9 +97,13 @@ if (process.platform === 'win32') { const j = await holdJob(process.pid, { name:
 const runFile = (name, f, i) => new Promise(resolve => {
   const ft = path.join(tmp, `${name}-${i}`), out = path.join(tmp, `${name}-${i}.jsonl`);
   fs.mkdirSync(ft);
+  // the census dir sits beside the file's temp dir, never in it: a test that lists or cleans its TEMP sees nothing of the census
+  const cd = path.join(tmp, `${name}-${i}.census`);
+  if (census) fs.mkdirSync(path.join(cd, 'trace2'), { recursive: true });
+  const t0 = Date.now();
   console.log(`ci-suite: start ${f}`);
   const child = spawn(process.execPath, ['--test', '--test-reporter=spec', '--test-reporter-destination=stdout',
-    `--test-reporter=${REPORTER}`, `--test-reporter-destination=${out}`, f], { env: { ...childEnv, TEMP: ft, TMP: ft, TMPDIR: ft } });
+    `--test-reporter=${REPORTER}`, `--test-reporter-destination=${out}`, f], { env: { ...childEnv, TEMP: ft, TMP: ft, TMPDIR: ft, ...(census ? censusEnv(childEnv.NODE_OPTIONS, fwd(preload), cd) : {}) } });
   const buf = [];
   child.stdout.on('data', d => buf.push(d)); child.stderr.on('data', d => buf.push(d));
   let hung = false, ended = false;
@@ -101,15 +113,18 @@ const runFile = (name, f, i) => new Promise(resolve => {
   child.on('exit', () => { if (hung) setTimeout(() => end(null, 'killed'), 5000).unref(); });
   const end = (status, signal) => {
     if (ended) return; ended = true; clearTimeout(cap);
+    const wall = Date.now() - t0;
     process.stdout.write(Buffer.concat(buf));
     console.log(`ci-suite: done ${f}`);
     const hang = hung ? { file: f, name: `no exit within the ${capS} s per-file cap (killed)` } : null;
-    const fails = fs.existsSync(out) ? fs.readFileSync(out, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l))
+    const lines = fs.existsSync(out) ? fs.readFileSync(out, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : null;
+    const row = { ...timeRow(f, wall, lines ?? []), phase: name, ...(census ? censusCount(cd) : {}) };
+    const fails = lines ? lines.filter(x => x.top == null)
       .map(x => ({ file: x.file ? fwd(path.relative(process.cwd(), x.file)) : f, name: x.name })) : hung ? [] : null;
     const procs = listProcs(), left = procsNaming([ft], procs);
     for (const p of left) killTree(p.pid, { killer: `ci-suite pid ${process.pid}`, reason: `${f}: left alive after the file (its command line names ${fwd(ft)})` });
     const leak = left.length ? { file: f, name: `left ${left.length} process(es) alive after the file: ${leakText(left, procs)}` } : null;
-    resolve({ f, status, signal, fails, leak, hang });
+    resolve({ f, status, signal, fails, leak, hang, row });
   };
   child.on('close', end);
 });
@@ -123,7 +138,7 @@ const phase = async (name, c, files) => {
   const none = res.find(r => !r.fails);
   if (none) { console.error(`ci-suite: ${none.f} wrote no result (exit ${none.status}, signal ${none.signal})`); process.exit(2); }
   const quiet = res.filter(r => r.status !== 0 && !r.fails.length && !r.hang).map(r => r.f);
-  return { name, status, quiet, fails: res.flatMap(r => r.fails), leaks: res.map(r => r.leak).filter(Boolean), hangs: res.map(r => r.hang).filter(Boolean) };
+  return { name, status, quiet, rows: res.map(r => r.row), fails: res.flatMap(r => r.fails), leaks: res.map(r => r.leak).filter(Boolean), hangs: res.map(r => r.hang).filter(Boolean) };
 };
 // CI 44335427788: a fresh runner's first browser launch is slow (ubuntu: 25-36 s; two at once passed the 30 s DevTools wait). With a
 // browser test in the run, one launch to the DevTools port and down goes first: the one-time cost lands here, measured, not on a
@@ -138,6 +153,12 @@ const runs = [];
 if (parFiles.length) runs.push(await phase('parallel', conc, parFiles));
 if (serFiles.length) runs.push(await phase('serial', '1', serFiles));
 filesDone = true;   // every file ended and its leftovers were swept (runFile)
+if (json) {
+  const rows = runs.flatMap(r => r.rows).sort((a, b) => a.file.localeCompare(b.file));
+  fs.mkdirSync(path.dirname(path.resolve(json)), { recursive: true });
+  fs.writeFileSync(json, JSON.stringify({ platform: process.platform, node: process.version, concurrency: Number(conc), census, files: rows }, null, 1) + '\n');
+  console.log(`ci-suite: ${rows.length} time row(s) written to ${json}`);
+}
 const j = judge(runs.flatMap(r => r.fails), list);
 for (const f of j.listed) console.log(`listed red: ${f.file} :: ${f.name}`);
 for (const k of j.fixed) console.log(`listed red now passes (remove it): ${k.file} :: ${k.name}`);

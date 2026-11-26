@@ -38,10 +38,10 @@ test('smoke workflow: triggers are workflow_dispatch + push to main only; matrix
 
 // ---------- ci.yml + nightly.yml on GitHub-hosted runners ----------
 const WF = n => fs.readFileSync(path.join(path.dirname(F), n), 'utf8');
-function common(t, name) {
+function common(t, name, conc = [`group: ${name}-\${{ github.ref }}`, 'cancel-in-progress: true']) {
   assert.ok(!t.includes('\t'), `${name}: tabs in YAML`);
   assert.deepEqual(block(t, 'permissions').map(l => l.trim()), ['contents: read'], name);
-  assert.deepEqual(block(t, 'concurrency').map(l => l.trim()), [`group: ${name}-\${{ github.ref }}`, 'cancel-in-progress: true'], name);
+  assert.deepEqual(block(t, 'concurrency').map(l => l.trim()), conc, name);
   const jobs = block(t, 'jobs');
   assert.ok(jobs.some(l => l.trim() === 'os: [windows-latest, ubuntu-latest]'), `${name}: Windows + Linux hosted legs`);
   assert.ok(jobs.some(l => l.trim() === 'runs-on: ${{ matrix.os }}'), name);
@@ -50,13 +50,23 @@ function common(t, name) {
   return jobs.map(l => l.trim());
 }
 
+// RM-26 S0 (DEC-a-651 Q6): a dispatch is its own concurrency group and nothing cancels a running suite; the per-file time JSON is an
+// artifact on both legs; the census runs only on a dispatch that asks for it (census input), never on a push or the nightly.
 test('ci.yml: push to main + nightly + dispatch, never a pull request; the full suite via ci-suite on both hosted legs', () => {
   const t = WF('ci.yml');
   const on = block(t, 'on');
   assert.deepEqual(on.filter(l => /^ {2}\S/.test(l)).map(l => l.trim()), ['push:', 'schedule:', 'workflow_dispatch:']);
   assert.ok(on.some(l => l.trim() === 'branches: [main]') && on.some(l => l.trim() === "- cron: '0 6 * * *'"));
   assert.doesNotMatch(t, /^\s*(pull_request|pull_request_target):/m);
-  assert.ok(common(t, 'ci').includes('run: node engine/bin/ci-suite.mjs'));
+  const jobs = common(t, 'ci', ["group: ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}", 'cancel-in-progress: false']);
+  const at = jobs.indexOf('run: node engine/bin/ci-suite.mjs --json "$RUNNER_TEMP/ci-times.json" $CENSUS');
+  assert.ok(at > 0 && jobs[at - 1] === "CENSUS: ${{ github.event_name == 'workflow_dispatch' && inputs.census && '--census' || '' }}", 'the census only on a dispatch asking for it');
+  const up = jobs.indexOf('- name: upload the per-file times');
+  assert.deepEqual(jobs.slice(up + 1, up + 6), ['if: ${{ always() && !matrix.code_rs_only }}', 'uses: actions/upload-artifact@v4', 'with:',
+    'name: ci-times-${{ matrix.os }}', 'path: ${{ runner.temp }}/ci-times.json'], 'the times JSON uploaded on both legs, red or green');
+  assert.ok(up > at);
+  const inp = on.map(l => l.trim()), ci = inp.indexOf('census:');
+  assert.deepEqual(inp.slice(ci + 1, ci + 4).filter(l => !l.startsWith('description:')), ['type: boolean', 'default: false']);
 });
 
 test('pr.yml: pull_request only; slop of the diff, norn smoke and ci-suite --changed run as three side-by-side Linux jobs; no full suite', () => {

@@ -16,14 +16,22 @@ on:
       - '**/*.html'
   schedule:
     - cron: '0 6 * * *'
+  # a dispatch with census=true also counts the git and node processes each test file starts (ci-suite --census; it costs time)
   workflow_dispatch:
+    inputs:
+      census:
+        description: 'count the git and node processes per test file (ci-suite --census)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+# RM-26 S0 (DEC-a-651 Q6): a dispatch is its own group (a push cannot cancel a baseline), and a push to main never cancels a running
+# suite: the newer run waits. ci.yml has no pull_request trigger, so nothing here cancels.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: false
 
 jobs:
   suite:
@@ -71,4 +79,13 @@ jobs:
       - name: suite (fails only on a red not in tests/KNOWN-REDS.txt)
         if: ${{ !matrix.code_rs_only }}
         shell: bash
-        run: node engine/bin/ci-suite.mjs
+        env:
+          CENSUS: ${{ github.event_name == 'workflow_dispatch' && inputs.census && '--census' || '' }}
+        run: node engine/bin/ci-suite.mjs --json "$RUNNER_TEMP/ci-times.json" $CENSUS
+      # RM-26 S0: one time row per test file (wall_ms, cases_ms, outside_ms, cases; with the census git_procs, node_procs)
+      - name: upload the per-file times
+        if: ${{ always() && !matrix.code_rs_only }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-times-${{ matrix.os }}
+          path: ${{ runner.temp }}/ci-times.json
