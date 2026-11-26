@@ -127,7 +127,7 @@ export function timeRow(file, wallMs, lines) {
 // census (CI 45728652472). The env a file's `node --test` gets for it: the caller's NODE_OPTIONS kept, a census preload of an outer
 // suite (a ci-suite test running ci-suite --census) replaced, so each process lands in the innermost census only.
 // RM-26 S6B-0 (census v2): the preload also wraps node:child_process (every thread) and appends one `{ exe, sub, site }` line per child
-// it starts to NORN_CENSUS_SPAWN: sub = git's subcommand (past -C / -c), site = the engine module below engine/ of the first stack frame
+// it starts to spawn.jsonl beside the NORN_CENSUS_NODE file (the file's census dir): sub = git's subcommand (past -C / -c), site = the engine module below engine/ of the first stack frame
 // that is not a git wrapper (bounded, dlvgit, gitfacts: their caller is the product path; SPEC-S6B work/spawnlog.cjs), else `tests`
 // (a test file, a fixture helper, node's own test runner). A Windows boundedSync child is `jobguard run <ms> <cwd> "<exe> <args>"`: the
 // line names the inner exe, `jg: true` (two process starts). exec routes through the exported execFile, so it is not wrapped again.
@@ -138,9 +138,10 @@ function censusPreload() {
   // never sees the census's appends (not appendFileSync: node's calls the exported writeFileSync, CI 45766140327)
   const { openSync, writeSync, closeSync, existsSync: exists } = fs;
   const append = (f, s) => { const fd = openSync(f, 'a'); try { writeSync(fd, s); } finally { closeSync(fd); } };
-  if (isMainThread && process.env.NORN_CENSUS_NODE) try { append(process.env.NORN_CENSUS_NODE, `${process.pid}\n`); } catch {}
-  const LOG = process.env.NORN_CENSUS_SPAWN;
-  if (!LOG) return;
+  const NODE = process.env.NORN_CENSUS_NODE;
+  if (!NODE) return;
+  if (isMainThread) try { append(NODE, `${process.pid}\n`); } catch { /* the count misses this process; the test still runs untouched */ }
+  const LOG = path.join(path.dirname(NODE), 'spawn.jsonl');
   const WRAP = /\/engine\/lib\/(bounded|dlvgit|gitfacts)\.mjs:/, PRE = /census-preload\.cjs|\(node:|^at node:/;
   const site = () => {
     const lim = Error.stackTraceLimit; Error.stackTraceLimit = 64;
@@ -167,7 +168,7 @@ function censusPreload() {
       const f0 = String(file), cl = /\s/.test(f0) && !exists(f0) ? f0.trim().split(/\s+/) : null;
       const e0 = cl ? cl[0].replace(/^"|"$/g, '') : f0, a0 = cl ? cl.slice(1) : Array.isArray(args) ? args : [], j =unJg(e0, a0), e = j ? j.exe : e0, a = j ? j.args : a0;
       append(LOG, JSON.stringify({ exe: path.basename(e.split('\\').join('/')), sub: subOf(e, a), site: site(), ...(j ? { jg: true } : {}) }) + '\n');
-    } catch {}
+    } catch { /* the census misses this child; the child still starts below, as without the census */ }
   };
   for (const name of ['spawn', 'spawnSync', 'execFile', 'execFileSync', 'fork']) {
     const orig = cp[name];
@@ -180,7 +181,6 @@ function censusPreload() {
 export const CENSUS_PRELOAD = `(${censusPreload})();\n`;
 /** (the caller's NODE_OPTIONS value, the preload's path, the file's census dir) -> the env entries a census run sets */
 export const censusEnv = (nodeOptions, preload, dir) => ({ GIT_TRACE2_EVENT: path.join(dir, 'trace2'), NORN_CENSUS_NODE: path.join(dir, 'node.txt'),
-  NORN_CENSUS_SPAWN: path.join(dir, 'spawn.jsonl'),
   NODE_OPTIONS: [String(nodeOptions ?? '').replace(/\s*--require="[^"]*census-preload\.cjs"/g, '').trim(), `--require="${preload}"`].filter(Boolean).join(' ') });
 /** the census dir -> { git_procs, node_procs, sites: { "<engine module>" | "tests": children started there }, jobguard: children run under jobguard } */
 export const censusCount = dir => {
@@ -192,4 +192,3 @@ export const censusCount = dir => {
   return { git_procs: fs.existsSync(t2) ? fs.readdirSync(t2).length : 0, node_procs: fs.existsSync(nf) ? fs.readFileSync(nf, 'utf8').split('\n').filter(Boolean).length : 0,
     sites, jobguard: spawns.filter(x => x.jg).length };
 };
-
