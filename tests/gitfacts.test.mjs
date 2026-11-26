@@ -61,3 +61,15 @@ test('mergeBase is memoized by sha in <common>/norn-memo.json; worktreeFacts reu
   const f1 = worktreeFacts(s.wt, { ttlMs: 60000 });
   assert.deepEqual([f1.tip, f1.commits, f1.touched.includes('y.txt')], [y, 2, true], 'a new tip: read again, inside the TTL too');
 });
+
+test('worktreeFacts ahead: a worktree 0 commits ahead of main starts no diff (touched []); one commit ahead is diffed as before', () => {
+  const s = setup(), common = headOf(s.wt).common, file = path.join(common, 'norn-memo.json'), key = `wt ${pathKey(s.wt)}`;
+  g(s.wt, 'reset', '-q', '--hard', s.m);   // the recent lane's branch is back on main: 0 commits ahead
+  fs.writeFileSync(path.join(s.wt, 'a.txt'), 'edited\n');   // an uncommitted tracked edit a diff would report
+  assert.deepEqual(worktreeFacts(s.wt, { ahead: true }), { branch: 'feat/x', tip: s.m, base: s.m, touched: [], commits: 0 });
+  saveMemos();
+  assert.ok(!(key in JSON.parse(fs.readFileSync(file, 'utf8'))), 'no diff ran: the touched list was never read, so none is memoized');
+  assert.deepEqual(worktreeFacts(s.wt).touched, ['a.txt'], 'without ahead (the other callers): diffed as today');
+  const y = commit(s.wt, 'y.txt', 'y\n', 'y'), f = worktreeFacts(s.wt, { ahead: true });
+  assert.deepEqual([f.tip, f.commits, f.touched], [y, 1, ['a.txt', 'y.txt']], 'ahead and 1 commit: the same diff');
+});
