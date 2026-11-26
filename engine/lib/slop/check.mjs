@@ -149,15 +149,19 @@ export function blobs(repo, specs) {
   return out;
 }
 /** the diff's entries: { status A|M|D|R|C|T, path (head), old (base) } with rename detection */
-export function diffEntries(repo, base, head) {
-  const parts = gitRun(repo, ['diff', '--name-status', '-M', '-z', base, head]).split('\0');
-  const out = [];
-  for (let i = 0; i < parts.length - 1;) {
-    const st = parts[i++][0];
-    if (st === 'R' || st === 'C') { const old = parts[i++], p = parts[i++]; out.push({ status: st, path: p, old }); }
-    else { const p = parts[i++]; out.push({ status: st, path: p, old: st === 'A' ? null : p }); }
+export const diffEntries = (repo, base, head) => diffRead(repo, base, head).entries;
+/** the entries and, with numstat, the head paths git counts as binary (junk's sizes): ONE git diff for both (a spawn is the cost on
+ *  Windows). -z --raw records (":modes shas status", then 1 or 2 paths) come first, the numstat records after them */
+export function diffRead(repo, base, head, { numstat = false } = {}) {
+  const parts = gitRun(repo, ['diff', '--raw', ...(numstat ? ['--numstat'] : []), '-M', '-z', base, head]).split('\0');
+  const entries = [];
+  let i = 0;
+  while (i < parts.length - 1 && parts[i].startsWith(':')) {
+    const st = parts[i++].split(' ').at(-1)[0];
+    if (st === 'R' || st === 'C') { const old = parts[i++], p = parts[i++]; entries.push({ status: st, path: p, old }); }
+    else { const p = parts[i++]; entries.push({ status: st, path: p, old: st === 'A' ? null : p }); }
   }
-  return out;
+  return { entries, binary: numstat ? new Set(parts.slice(i).filter(l => /^-\t-\t/.test(l)).map(l => l.slice(4)).filter(Boolean)) : null };
 }
 // an absolute path -> its path in the repo (relative to any worktree of it: the main checkout or a lane's), or null (outside the repo)
 function repoPath(repo) {
@@ -295,8 +299,7 @@ const DETECT = {
   },
   junk: (rule, ctx) => {
     const added = ctx.entries.filter(e => ['A', 'R', 'C'].includes(e.status) && !matchAny(rule.allow, e.path));
-    const binary = new Set(gitRun(ctx.repo, ['diff', '--numstat', '-z', '-M', ctx.base, ctx.head]).split('\0').filter(l => /^-\t-\t/.test(l)).map(l => l.slice(4)).filter(Boolean));
-    const head = [];
+    const binary = ctx.binary, head = [];
     for (const e of added) {
       const pat = rule.patterns.find(p => new RegExp(p).test(e.path));
       if (pat) { head.push({ file: e.path, line: 0, msg: `junk name (${pat})`, snippet: e.path }); continue; }
@@ -347,18 +350,35 @@ const pathspecs = rule => [...(rule.files || ['**']).map(g => `:(glob)${g}`), ..
  * A rule whose detector throws is a finding of its own (couldNotRun): no check passes by not checking.
  */
 export function slopCheck({ repo, base, head = 'HEAD', rules = loadRules(), only = null, tool = runTool, resolve = null, brief = null, machine = true, config = null, state = null, now = Date.now() }) {
+  // RM-26 S6: one git reader per check - both refs and the common dir in ONE rev-parse; a ref it cannot take (a bad one, a range):
+  // each alone through --verify, so the error names it as before
   const sha = r => gitRun(repo, ['rev-parse', '--verify', r + '^{commit}']).trim();
-  const B = sha(base), H = sha(head);
-  const entries = diffEntries(repo, B, H), picked = rules.filter(r => !only || only.includes(r.id)), run = [...picked.filter(r => r.kind !== 'model'), ...picked.filter(r => r.kind === 'model')];
+  const one = (() => { try { return gitRun(repo, ['rev-parse', '--path-format=absolute', '--git-common-dir', base + '^{commit}', head + '^{commit}', '--']).split('\n'); } catch { return []; } })();
+  const fine = one.length === 5 && /^[0-9a-f]{40,64}$/.test(one[1]) && /^[0-9a-f]{40,64}$/.test(one[2]) && one[3] === '--';
+  const B = fine ? one[1] : sha(base), H = fine ? one[2] : sha(head);
+  const picked = rules.filter(r => !only || only.includes(r.id)), run = [...picked.filter(r => r.kind !== 'model'), ...picked.filter(r => r.kind === 'model')];
+  const { entries, binary } = diffRead(repo, B, H, { numstat: run.some(r => r.kind === 'junk') });
   const rev = s => (s === 'head' ? H : B), cache = new Map(), trees = {};
+  // the first read of texts takes every text blob of the diff, both sides, and the files the rules name (LJ's config, R2's CLI, K21's
+  // list, the voice's context) at both, in the same cat-file (most rules read them); one that fails (a diff too big for one buffer)
+  // leaves each read to fetch its own
+  let first = true;
+  const named = [...new Set(run.flatMap(r => [r.config, r.cli, r.allow?.listed_in, ...(r.context || [])]).filter(f => typeof f === 'string'))];
+  const read = (s, want) => {
+    const all = new Map(want.map(f => [`${s}:${f}`, `${rev(s)}:${f}`])), add = (side, f) => all.set(`${side}:${f}`, `${rev(side)}:${f}`);
+    if (first) { for (const e of entries) if (!binary?.has(e.path)) { if (e.status !== 'D') add('head', e.path); if (e.old) add('base', e.old); } for (const f of named) { add('head', f); add('base', f); } }
+    const keys = [...all.keys()].filter(k => !cache.has(k));
+    try { blobs(repo, keys.map(k => all.get(k))).forEach((t, k) => cache.set(keys[k], t)); } catch (e) { if (!first) throw e; first = false; return read(s, want); }
+    first = false;
+  };
   const grep = (s, args, spec) => gitRun(repo, ['grep', '-I', ...args, rev(s), '--', ...spec], { ok: [0, 1] }).split('\n').filter(Boolean);
   const findings = [], ran = [];
   // secrets: the project's secrets rule (LS) when it is on, even if `only` leaves it out - the voice withholds its hunks (voice.mjs secretLines)
-  const ctx = { repo, base: B, head: H, entries, tool, resolve, brief, state, found: findings, config, secrets: rules.find(r => r.id === SECRETS_RULE) || null, secretScan: r => lint(r, ctx), lintRules: run.filter(r => r.kind === 'lint'), astRules: run.filter(r => r.kind === 'ast'), modelRules: run.filter(r => r.kind === 'model'),
+  const ctx = { repo, base: B, head: H, entries, binary, common: fine ? one[0] : null, tool, resolve, brief, state, found: findings, config, secrets: rules.find(r => r.id === SECRETS_RULE) || null, secretScan: r => lint(r, ctx), lintRules: run.filter(r => r.kind === 'lint'), astRules: run.filter(r => r.kind === 'ast'), modelRules: run.filter(r => r.kind === 'model'),
     diff: (files, exclude) => gitRun(repo, ['-c', 'core.quotepath=off', 'diff', '-U3', '--no-color', '--src-prefix=a/', '--dst-prefix=b/', '-M', B, H, '--', ...pathspecs({ files, exclude })]),
     texts: (s, files) => {
       const want = files.filter(f => !cache.has(`${s}:${f}`));
-      blobs(repo, want.map(f => `${rev(s)}:${f}`)).forEach((t, k) => cache.set(`${s}:${want[k]}`, t));
+      if (want.length) read(s, want);
       return files.map(f => cache.get(`${s}:${f}`));
     },
     text: (s, f) => (f ? ctx.texts(s, [f])[0] : null),
@@ -374,7 +394,21 @@ export function slopCheck({ repo, base, head = 'HEAD', rules = loadRules(), only
       }
       return by;
     },
-    grepLines: (s, re, spec) => grep(s, ['-h', '-o', '-E', '-e', re], spec),
+    // both sides in ONE git grep (each output line "<rev>:<path>\0<match>"), the other side kept for its own call
+    grepLines: (s, re, spec) => {
+      const k = JSON.stringify([re, spec]), memo = (ctx.greps ||= new Map());
+      if (!memo.has(k)) {
+        const got = { head: [], base: [] }, revs = B === H ? [H] : [H, B];
+        for (const l of gitRun(repo, ['grep', '-I', '-z', '-o', '-E', '-e', re, ...revs, '--', ...spec], { ok: [0, 1] }).split('\n')) {
+          const z = l.indexOf('\0'), m = l.slice(z + 1);
+          if (z < 0 || !m) continue;
+          if (l.startsWith(H + ':')) got.head.push(m);
+          if (B === H || !l.startsWith(H + ':')) got.base.push(m);
+        }
+        memo.set(k, got);
+      }
+      return memo.get(k)[s];
+    },
     gitDir: () => (ctx.common ||= gitRun(repo, ['rev-parse', '--path-format=absolute', '--git-common-dir']).trim()),   // the project tools' logs and main checkout
   };
   const renamed = new Map(entries.filter(e => e.old && e.old !== e.path).map(e => [e.old, e.path]));
