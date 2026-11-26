@@ -259,6 +259,28 @@ test('TEST-GOVERNANCE S1 + test-diet S1: a fake worker (a resumed run too) issui
   assert.ok(refusals(w.state).some(r => /full test suite/.test(r.why)), 'the deny is recorded for the run feed and the Slop list');
 });
 
+test('DEC-a-651 Q4: past the budget the hook lets ONE rerun of a file that failed earlier in the run through (from its transcript); a second rerun and a file that did not fail are refused; under budget nothing changes', () => {
+  const w = world(), tr = path.join(w.root, 'transcript.jsonl'), t = s => `2026-11-20T10:${s}Z`;
+  fs.mkdirSync(path.join(w.state, 'runs'), { recursive: true });
+  fs.writeFileSync(path.join(w.state, 'runs', 'RUN-1.spec.json'), JSON.stringify(w.spec));
+  const use = (id, ts, command) => JSON.stringify({ type: 'assistant', timestamp: ts, message: { content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] } });
+  const res = (id, ts, content) => JSON.stringify({ type: 'user', timestamp: ts, message: { content: [{ type: 'tool_result', tool_use_id: id, content, is_error: /FAIL/.test(content) }] } });
+  const lines = [], add = (...l) => { lines.push(...l); fs.writeFileSync(tr, lines.join('\n') + '\n'); };
+  const hook = command => {
+    const r = spawnSync(process.execPath, [META, 'scope', 'check', '--run', 'RUN-1', '--state', w.state],
+      { input: JSON.stringify({ session_id: 'S', hook_event_name: 'PreToolUse', transcript_path: tr, ...bash(command, w.wt) }), encoding: 'utf8', windowsHide: true, env: { ...process.env, META_RUN_ID: 'RUN-1' } });
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim() ? JSON.parse(r.stdout).hookSpecificOutput.permissionDecisionReason : null;
+  };
+  add(use('a', t('00:00'), 'norn tests run tests/a.test.mjs tests/b.test.mjs'), res('a', t('01:00'), 'FAIL tests/a.test.mjs 50.0 s\npass tests/b.test.mjs 10.0 s'));
+  assert.equal(hook('norn tests run tests/b.test.mjs'), null, 'under budget: a file that passed runs as before');
+  add(use('c', t('01:00'), 'norn tests run tests/c.test.mjs'), res('c', t('03:30'), 'pass tests/c.test.mjs 150.0 s'));
+  assert.match(hook('norn tests run tests/b.test.mjs'), /past its budget.*only ONE rerun of files that failed earlier in this run passes: `norn tests run a\.test\.mjs`/, 'a file that did not fail');
+  assert.equal(hook('norn tests run tests/a.test.mjs'), null, 'the one rerun of the failed file');
+  add(use('r', t('04:00'), 'norn tests run tests/a.test.mjs'), res('r', t('05:00'), 'pass tests/a.test.mjs 60.0 s'));
+  assert.match(hook('norn tests run tests/a.test.mjs'), /past its budget.*one rerun of a file that failed earlier in this run is spent/, 'a second rerun');
+});
+
 test('TEST-GOVERNANCE S1 + test-diet S1: the launch installs the hook alone (shell tools) when the scope guard is off and policy.tests checks something; none with a free policy.tests; the Settings rows', () => {
   const w = world(), f = policy => { const p = path.join(w.root, `p-${Object.keys(policy).join('')}.json`); fs.writeFileSync(p, JSON.stringify({ schema: 1, name: 'demo', title: 'Demo', root: w.root.replace(/\\/g, '/'), policy })); return p; };
   const s = scopeOfLaunch({ ...w.spec, executor: 'claude', ctx_from: f({ dod: { scope: 'off' } }) });

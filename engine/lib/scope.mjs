@@ -20,7 +20,7 @@ import { parseReady, inScope } from './ready.mjs';
 import { feedFiles, oneLine } from './harness/common.mjs';
 import { hookEntry } from './rustbin.mjs';
 import { isTest } from './testcmd.mjs';
-import { testsPolicy, testsFree, testsCheck, readTestMs } from './testpolicy.mjs';
+import { testsPolicy, testsFree, testsCheck, readTestRun } from './testpolicy.mjs';
 import { specPolicy } from './ctxlimit.mjs';
 
 export const SCOPE_TOOLS = 'Bash|PowerShell|Edit|Write|NotebookEdit';
@@ -63,13 +63,14 @@ export function guardSettings(policy, spec, hook) {
   if (scopeOnFor(policy, spec)) return scopeSettings(spec, hook);
   return testsFree(testsPolicy(policy)) ? undefined : { hooks: { PreToolUse: [{ matcher: 'Bash|PowerShell', hooks: [hook] }] } };
 }
-/** a shell call against policy.tests (testpolicy.mjs testsCheck) -> the refusal reason, else null. The run's test time is read from
- *  its transcript (the payload's transcript_path) only for a test command under a budget. */
+/** a shell call against policy.tests (testpolicy.mjs testsCheck) -> the refusal reason, else null. The run's test time, its failed test
+ *  files and its reruns past the budget are read from its transcript (the payload's transcript_path) only for a test command under a budget. */
 export function testsHook(p, policy, worktree) {
   const t = p?.tool_name, cmd = p?.tool_input?.command;
   if ((t !== 'Bash' && t !== 'PowerShell') || typeof cmd !== 'string') return null;
   const tp = testsPolicy(policy);
-  return testsCheck(cmd, tp, { testMs: tp.run_budget_min > 0 && isTest(cmd) ? readTestMs(p.transcript_path) : null, cwd: p.cwd || worktree || '.' });
+  const run = tp.run_budget_min > 0 && isTest(cmd) ? readTestRun(p.transcript_path, tp.run_budget_min * 60000) : null;
+  return testsCheck(cmd, tp, { testMs: run?.ms ?? null, failed: run?.failed, reruns: run?.reruns, cwd: p.cwd || worktree || '.' });
 }
 /** the working directories a guarded run gets beyond its worktree and addDirs: the NOTES folder (its shots sit there too) */
 export const notesDir = spec => (spec.notes ? path.dirname(path.resolve(spec.notes)) : null);
