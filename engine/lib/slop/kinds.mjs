@@ -28,7 +28,10 @@ function lintSide(ctx, side, tool, own = null) {
   try {
     const rules = own ? [own] : ctx.lintRules.filter(r => r.tool === tool), texts = new Map(), cfg = rules.find(r => r.config)?.config, t = LINTERS[tool];
     const names = new Map();   // the path the tool names -> the head's path (own: the side's path, a rename)
-    for (const r of rules) for (const x of sideFiles(r, ctx, side)) { texts.set(x.e.path, x.text); names.set(own ? x.file : x.e.path, x.e.path); }
+    // RM-26 S6: ESLint's base side lints only the files with a head finding: a base finding counts only against a head one of its
+    // file (pairFindings), and the core rules (no plugin, eslint.config.mjs) read one file at a time
+    const at = tool === 'eslint' && !own && side === 'base' ? lintSide(ctx, 'head', tool) : null;
+    for (const r of rules) for (const x of sideFiles(r, ctx, side)) if (!at || at.has(x.e.path)) { texts.set(x.e.path, x.text); names.set(own ? x.file : x.e.path, x.e.path); }
     if (!texts.size) return (memo[side] = new Map());
     // SPEC 3.1: both sides lint under the repo config of the MERGE BASE (a branch cannot weaken the gate nor run code in it)
     const id = rules.map(r => r.id).join('+'), run = tool === 'eslint' ? { id, kind: 'lint', tool, rules: Object.assign({}, ...rules.map(r => r.rules)), config: ctx.config ?? (cfg ? ctx.text('base', cfg) : null) }

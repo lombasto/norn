@@ -60,6 +60,8 @@ R2 (`refs`) excludes changelogs (`**/CHANGELOG*.md`): a changelog line naming a 
 A rule file never loads code: the engine writes the ESLint config from the rule's data and the merge base's `eslint.config.mjs`
 (plain data, core rules only), with inline config comments off. ESLint is the locked tool set in `tools/lint`, installed by
 `npm ci --ignore-scripts` into `<meta root>/state/tools/lint/<lock hash>`; a tool that cannot install or run is a BLOCK "could not run".
+The merge base side lints only the files with a head-side finding: a base finding only counts against a head one of its file, and
+the core rules read one file at a time.
 The `ast` rules run on the locked ast-grep set in `tools/ast` (`@ast-grep/cli`, installed the same way into
 `<meta root>/state/tools/ast/<lock hash>`): ONE scan per side over every `ast` rule, the platform binary run directly. ast-grep could
 not run when it exits other than 0 (8: a rule that does not parse), prints an `ERROR:` line on stderr or prints a line that is not
@@ -228,8 +230,8 @@ a `fn` of the test's module or a `*test*` / `*util*` path).
 
 ## Machine rules
 
-`machine: true` marks a rule that reads this machine's state rather than the diff's trees (K14: `norn gen --check` reads the
-generated harness files on this machine). `norn slop check --ci` (the pull-request job) and the daily's check of a landing do not run such a
+`machine: true` marks a rule that reads this machine's state rather than the diff's trees (K14: `norn gen --check`, called in the
+check's own process, reads the generated harness files on this machine). `norn slop check --ci` (the pull-request job) and the daily's check of a landing do not run such a
 rule (it is not in the summary's `ran:` list); every other check runs it. The flag is the rule's data, never a project override.
 
 ## Finding shape
