@@ -57,6 +57,8 @@ test('readyGate: policy.dod.ready off | warn | refuse (default off); a MERGE sta
   fs.writeFileSync(bad, '# x\nScope: a/**\n'); fs.writeFileSync(good, READY);
   assert.equal(withDefaults({}).policy.dod.ready, 'off');
   assert.deepEqual(readyGate({ brief: bad, policy: {} }).refused, null);
+  // off: no refusal, no warning, no dod - norn run (its readyGate call) then prints nothing and records no dod_ready on the run
+  assert.deepEqual(readyGate({ brief: bad, policy: { dod: { ready: 'off' } } }), { refused: null, warning: null, dod: null });
   const w = readyGate({ brief: bad, policy: { dod: { ready: 'warn' } } });
   assert.equal(w.refused, null); assert.match(w.warning, /lacks Tests:, Done:/);
   const r = readyGate({ brief: bad, policy: { dod: { ready: 'refuse' } } });
@@ -231,20 +233,19 @@ function normRun(t, wt, repo, { brief, policy, gate, base = process.env }) {
   return { r, state };
 }
 
-test('norn run refuses a brief without the Ready lines (refuse, exit 6), warns (warn), says nothing (off)', async () => {
+// off is the same norn run wiring with a different readyGate answer: its keeper is the readyGate unit case above
+test('norn run refuses a brief without the Ready lines (refuse, exit 6), warns (warn)', async () => {
   const t = mkTmp('meta-dod-run-'), { repo, wt } = laneRepo(t);
   const a = normRun(t, wt, repo, { brief: 'mode: done\n', policy: { dod: { ready: 'refuse' } } });
   assert.equal(a.r.status, 6, a.r.stdout + a.r.stderr);
   assert.match(a.r.stdout, /^REFUSED: brief .*brief\.md lacks Scope:, Tests:, Done: \(policy\.dod\.ready = refuse\)/m);
   assert.ok(!fs.existsSync(a.state) || !Object.keys(loadState(a.state).items).some(k => /^RUN-/.test(k)), 'no run recorded');
-  for (const [mode, want] of [['warn', /^WARNING RUN-1: brief .*brief\.md lacks Scope:, Tests:, Done: \(policy\.dod\.ready = warn\)/m], ['off', null]]) {
-    const t2 = mkTmp(`meta-dod-run-${mode}-`), l = laneRepo(t2), b = normRun(t2, l.wt, l.repo, { brief: 'mode: done\n', policy: { dod: { ready: mode } } });
-    assert.equal(b.r.status, 0, b.r.stdout + b.r.stderr);
-    assert.match(b.r.stdout, /^STARTED RUN-1 /m);
-    if (want) assert.match(b.r.stdout, want); else assert.doesNotMatch(b.r.stdout, /WARNING|lacks/);
-    assert.deepEqual(loadState(b.state).items['RUN-1'].data.dod_ready, mode === 'warn' ? { mode: 'warn', ok: false, missing: ['Scope:', 'Tests:', 'Done:'] } : undefined);
-    await waitFor(() => settled(loadState(b.state).items['RUN-1']), { what: 'the run ends' });
-  }
+  const t2 = mkTmp('meta-dod-run-warn-'), l = laneRepo(t2), b = normRun(t2, l.wt, l.repo, { brief: 'mode: done\n', policy: { dod: { ready: 'warn' } } });
+  assert.equal(b.r.status, 0, b.r.stdout + b.r.stderr);
+  assert.match(b.r.stdout, /^STARTED RUN-1 /m);
+  assert.match(b.r.stdout, /^WARNING RUN-1: brief .*brief\.md lacks Scope:, Tests:, Done: \(policy\.dod\.ready = warn\)/m);
+  assert.deepEqual(loadState(b.state).items['RUN-1'].data.dod_ready, { mode: 'warn', ok: false, missing: ['Scope:', 'Tests:', 'Done:'] });
+  await waitFor(() => settled(loadState(b.state).items['RUN-1']), { what: 'the run ends' });
 });
 
 test('run end: a DONE whose Done check fails is STOPPED, resumed once with the evidence; the second fail stays STOPPED for the check-in', async () => {
