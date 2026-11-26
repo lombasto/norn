@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { mkTmp } from './helpers/tmp.mjs';
 import { classify } from '../engine/lib/testcmd.mjs';
-import { testsPolicy, testsFree, policyWords, fullSuiteDeny, testsCheck, testMsOf, pickRun } from '../engine/lib/testpolicy.mjs';
+import { testsPolicy, testsFree, policyWords, fullSuiteDeny, testsCheck, testMsOf, testRunOf, pickRun } from '../engine/lib/testpolicy.mjs';
 
 const DEF = { mode: 'light', run_budget_min: 3, browser: 'ci', full_suite: 'deny' };
 const FREE = { mode: 'changed', run_budget_min: 0, browser: 'allow', full_suite: 'allow' };
@@ -61,6 +61,33 @@ test('testsCheck: the full suite, mode off, the budget, a browser file and a dir
   // the norn runner itself and other runners pass under budget; a free policy passes them all
   for (const c of ['norn tests run --changed', 'norn tests run tests/a.test.mjs', 'python -m pytest tests/test_x.py']) assert.equal(chk(c), null, c);
   for (const c of ['node --test tests/page.test.mjs', 'node engine/bin/ci-suite.mjs --changed origin/main']) assert.equal(chk(c, FREE, { testMs: 1e9 }), null, c);
+});
+
+test('testsCheck (DEC-a-651 Q4): past the budget ONE rerun of files that failed earlier passes; a second one, or a file that did not fail, is refused; under budget nothing changes', () => {
+  const past = { testMs: 200000, failed: ['slop.test.mjs'] };
+  assert.equal(testsCheck('norn tests run tests/slop.test.mjs', DEF, { ...past, reruns: 0 }), null, 'the rerun of the failed file');
+  assert.match(testsCheck('norn tests run tests/slop.test.mjs', DEF, { ...past, reruns: 1 }), /past its budget.*one rerun of a file that failed earlier in this run is spent/);
+  assert.match(testsCheck('norn tests run tests/a.test.mjs', DEF, past), /past its budget.*only ONE rerun of files that failed earlier in this run passes: `norn tests run slop\.test\.mjs`/);
+  assert.match(testsCheck('norn tests run tests/slop.test.mjs tests/a.test.mjs', DEF, past), /past its budget/, 'every file must have failed');
+  assert.match(testsCheck('norn tests run --changed', DEF, past), /past its budget/, 'no named files: no rerun');
+  assert.doesNotMatch(testsCheck('norn tests run tests/a.test.mjs', DEF, { testMs: 200000 }), /rerun/, 'nothing failed: the plain deny');
+  assert.equal(testsCheck('norn tests run tests/a.test.mjs', DEF, { testMs: 1000, failed: [], reruns: 5 }), null, 'under budget: as before');
+  assert.match(testsCheck('node engine/bin/ci-suite.mjs', DEF, { ...past, failed: [] }), /full test suite/, 'the full-suite rule is untouched');
+});
+
+test('testRunOf: the FAIL files of the run\'s `norn tests run` results and its test calls that ran past the budget (a refused one does not count)', () => {
+  const use = (id, ts, command) => JSON.stringify({ type: 'assistant', timestamp: ts, message: { content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] } });
+  const res = (id, ts, content, err = false) => JSON.stringify({ type: 'user', timestamp: ts, message: { content: [{ type: 'tool_result', tool_use_id: id, content, is_error: err }] } });
+  const t = s => `2026-11-20T10:${s}Z`, B = 180000;
+  const lines = [use('a', t('00:00'), 'norn tests run tests/slop.test.mjs tests/b.test.mjs'),
+    res('a', t('03:10'), 'FAIL tests/slop.test.mjs 150.0 s (3 pass 1 fail)\npass tests/b.test.mjs 40.0 s\ntests run: 2 file(s): 2 ran, 0 reused, 1 red', true)];
+  assert.deepEqual(testRunOf(lines.join('\n'), B), { ms: 190000, failed: ['slop.test.mjs'], reruns: 0 });
+  lines.push(use('r', t('03:20'), 'norn tests run tests/b.test.mjs'), res('r', t('03:20'), 'Norn refused this Bash call: ... past its budget ...', true));
+  assert.equal(testRunOf(lines.join('\n'), B).reruns, 0, 'a refused command ran nothing');
+  lines.push(use('x', t('04:00'), 'norn tests run tests/slop.test.mjs'), res('x', t('05:00'), 'pass tests/slop.test.mjs 60.0 s'));
+  assert.deepEqual(testRunOf(lines.join('\n'), B), { ms: 250000, failed: ['slop.test.mjs'], reruns: 1 });
+  assert.equal(testRunOf(lines.join('\n')).reruns, 0, 'no budget: no rerun counted');
+  assert.equal(testMsOf(lines.join('\n')), 250000);
 });
 
 test('testsCheck: the browser check reads the named file relative to cwd (its default read)', () => {

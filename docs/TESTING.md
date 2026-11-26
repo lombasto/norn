@@ -45,7 +45,7 @@ rounds); the scope hook enforces it at each test command and the run-end Done ch
 | Setting | Default | What it does |
 |---|---|---|
 | `mode` | `light` | `light`: only the test files that directly cover what you changed (your changed test files, then per changed module its own test, else one named after it, else one that imports it). `changed`: every test file touching the change (ci-suite's pick). `off`: no tests in a run; CI runs them. |
-| `run_budget_min` | 3 | The test wall time a run may spend, from its own transcript. Past it the hook refuses the next test command: stop testing and finish. The Done check stays inside it too: what it could not start is left to CI (unknown, not a pass, not red). 0 = no budget. |
+| `run_budget_min` | 3 | The test wall time a run may spend, from its own transcript. Past it the hook refuses the next test command: stop testing and finish. One exemption until RM-26 S3 lands (DEC-a-651 Q4; the controller removes it then): past the budget, ONE test command per run whose files all FAILED earlier in the same run (its own `norn tests run` results) still runs. The Done check stays inside it too: what it could not start is left to CI (unknown, not a pass, not red). 0 = no budget. |
 | `browser` | `ci` | Browser (page) tests never run in a run: `norn tests run` skips them, a direct `node --test` of such a file is refused. CI runs them. `allow` lets a run start them. |
 | `full_suite` | `deny` | The hook refuses a full suite in every run, even when a hand-off asks for "one full suite". The full suite is `node engine/bin/ci-suite.mjs` without `--changed`, `node --test tests/`, bare `pytest` or `pytest tests`, `npm test`. |
 
