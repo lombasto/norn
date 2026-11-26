@@ -5,7 +5,8 @@
 //   --changed BASE runs only the matched files the change BASE...HEAD touches (lib/cisuite.mjs pickTests: the
 //   fast PR job; the full suite runs after the merge and nightly); --max N caps the files picked only for importing a changed file.
 //   --json F writes one time row per file (lib/cisuite.mjs timeRow: wall_ms, cases_ms, outside_ms, cases) to F; --census adds per file
-//   the git and node processes it started (git_procs, node_procs: censusEnv). The census costs time: ci.yml runs it on a dispatch only.
+//   the git and node processes it started (git_procs, node_procs: censusEnv), the children per spawn site (sites: { "<engine module>" |
+//   "tests": n }) and those run under jobguard (jobguard: censusCount). The census costs time: ci.yml runs it on a dispatch only.
 // The suite is one `node --test` per matched file, N at a time, plus a reporter that writes the reds; smoke.test.mjs
 // then runs alone (DEC-78). CI and the merge lanes call this script: it is the one home of the suite command.
 // exit 0 = no new red, 1 = a new red, a file that left a process alive or one past the wall cap (named on stdout), 2 = usage / the suite produced no result.
