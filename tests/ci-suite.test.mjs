@@ -166,7 +166,7 @@ test('timeRow: cases_ms sums the top-level case lines only; outside_ms is the re
 
 test('ci-suite --json F: one row per file (wall_ms, cases_ms, outside_ms, cases, phase); the reds are judged as before', () => {
   const out = path.join(mkTmp('meta-ci-json-'), 'sub', 'times.json');
-  const r = spawnSync(process.execPath, [CI, '--known', `${FX}/known.txt`, '--json', out, `${FX}/*.test.mjs`], { cwd: REPO, encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [CI, '--known', `${FX}/known.txt`, '--json', out, `${FX}/*.test.mjs`], { cwd: REPO, encoding: 'utf8', windowsHide: true });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.match(r.stdout, /ci-suite: 2 listed red\(s\), 0 new/);
   const j = JSON.parse(fs.readFileSync(out, 'utf8'));
@@ -176,7 +176,7 @@ test('ci-suite --json F: one row per file (wall_ms, cases_ms, outside_ms, cases,
   assert.ok(x.wall_ms > 0 && x.cases_ms <= x.wall_ms && x.outside_ms === x.wall_ms - x.cases_ms, JSON.stringify(x));
   assert.ok(!('git_procs' in x) && !('node_procs' in x), 'no census without --census');
   for (const a of [['--census'], ['--json']]) {
-    const bad = spawnSync(process.execPath, [CI, ...a], { cwd: REPO, encoding: 'utf8' });
+    const bad = spawnSync(process.execPath, [CI, ...a], { cwd: REPO, encoding: 'utf8', windowsHide: true });
     assert.equal(bad.status, 2); assert.match(bad.stderr, /--census needs --json|--json needs a file/);
   }
 });
@@ -198,7 +198,7 @@ test('ci-suite --census: git_procs (GIT_TRACE2_EVENT, a file per git process) an
   fs.writeFileSync(path.join(fx, 'spawns.test.mjs'), "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { spawnSync } from 'node:child_process';\n" +
     "test('census spawns: git twice', () => { for (let i = 0; i < 2; i++) assert.equal(spawnSync('git', ['--version']).status, 0); });\n" +
     `test('census spawns: node once, on a .txt entry', () => { const r = spawnSync(process.execPath, [${JSON.stringify(path.join(fx, 'chk.txt'))}], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); });\n`);
-  const r = spawnSync(process.execPath, [CI, '--json', out, '--census', `${fx.split('\\').join('/')}/*.test.mjs`], { cwd: REPO, encoding: 'utf8', env: suiteEnv(process.env) });
+  const r = spawnSync(process.execPath, [CI, '--json', out, '--census', `${fx.split('\\').join('/')}/*.test.mjs`], { cwd: REPO, encoding: 'utf8', windowsHide: true, env: suiteEnv(process.env) });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const j = JSON.parse(fs.readFileSync(out, 'utf8')), [plain, spawns] = j.files;
   assert.equal(j.census, true);
