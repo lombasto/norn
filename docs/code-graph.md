@@ -460,7 +460,7 @@ with no wrong definition and no wrong chosen call edge (tests/code-graph-grade.t
     crate dir but any entry named `target`, relative posix paths sorted by UTF-16 unit, each as path + NUL + bytes + NUL, sha256, the
     first 12 hex), given to the crate as `NORN_SOURCE`. The one build.rs is the same file in engine/hook-rs and engine/code-rs, std
     only (sha256 written out, so norn-hook still builds with no registry fetch). A build with no Norn around it (a developer's
-    `cargo build`, CI's cargo step) prints the true hash of the files it built, the same one Norn would name it by.
+    `cargo build` or `cargo test`) prints the true hash of the files it built, the same one Norn would name it by.
   - `partProblem` asks every part (norn-hook too: one ~5 ms spawn per ensure) and returns `<bin> at <file> is not this source's
     binary: it answers source <its hash>, its name says <the name's hash>` when they differ, or `n/a (<why>)` when it answers no
     source. `ensurePart` then cleans, builds and REPLACES the entry (the temp + rename above).
