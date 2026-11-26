@@ -7,8 +7,9 @@
 export const motionAllowed = ({ quiet = false, reduced = false, hidden = false } = {}) => !quiet && !reduced && !hidden;
 
 /**
- * createScheduler({ render, hidden, coalesceMs = 120, setTimer, clearTimer }) -> { poke(reason), visible(), stats() }
- * render: async () => void (one refetch + paint); hidden: () => bool. poke() during a render queues exactly one more.
+ * createScheduler({ render, hidden, coalesceMs = 120, setTimer, clearTimer }) -> { poke(reason), visible(), drop(), stats() }
+ * render: async () => void (one refetch + paint); hidden: () => bool. poke() during a render queues exactly one more. drop(): a direct
+ * render (a click) refetches everything after the waiting pokes arrived, so they are covered: no second strip / page fetch behind it.
  */
 export function createScheduler({ render, hidden = () => false, coalesceMs = 120, setTimer = setTimeout, clearTimer = clearTimeout }) {
   let timer = null, busy = false, again = false, deferred = false, renders = 0;
@@ -31,5 +32,6 @@ export function createScheduler({ render, hidden = () => false, coalesceMs = 120
   }
   // the tab became visible: render once if anything arrived while hidden
   function visible() { if (deferred) { deferred = false; poke('visible'); } }
-  return { poke, visible, stats: () => ({ renders, pending: timer !== null || deferred, busy }) };
+  function drop() { if (timer !== null) { clearTimer(timer); timer = null; } reasons.clear(); }
+  return { poke, visible, drop, stats: () => ({ renders, pending: timer !== null || deferred, busy }) };
 }
