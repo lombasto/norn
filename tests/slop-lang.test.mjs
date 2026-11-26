@@ -131,3 +131,4 @@ test('K10 over Python and TypeScript: a two-module Python import cycle and a TS 
     ['engine/t/a.ts', 'import cycle: engine/t/a.ts -> engine/t/b.ts'],
   ]);
 });
+// scratch: NORN-CI-TESTS-PARTS proof run, dropped before merge
