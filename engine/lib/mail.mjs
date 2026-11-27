@@ -26,7 +26,8 @@ export function qualify(to, h) {
   if (/^lane:[^/]+$/.test(t)) return `lane:${h}/${t.slice(5)}`;
   return t;
 }
-const stored = (state, m) => qualify(m.data.to, homeOf(state)?.bare_home ?? null);
+/** the address a stored mail is for, as this home reads it (a bare address keeps its bare_home meaning) */
+export const stored = (state, m) => qualify(m.data.to, homeOf(state)?.bare_home ?? null);
 const byId = (a, b) => num(a.id) - num(b.id);
 
 /**
