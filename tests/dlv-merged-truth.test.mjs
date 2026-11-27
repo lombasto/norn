@@ -88,19 +88,20 @@ test('a deleted-branch merged deliverable stays merged: the tick latched what gi
   const { repo, tip } = repoWithBranch();
   const state = tmp('state'), bare = tmp('state');
   for (const s of [state, bare]) mkDlv(s, { repo, branch: 'feat/x', tip, delivers: 'x', done_utc: at(-10).toISOString() });
-  // a hand landing: the branch is rebased with edits and pushed (its ref moves), then fast-forwarded onto main
-  write(repo, 'app.js', ['a', 'b', 'c', 'd2', 'e']); commitAll(repo, 'main moves');
-  g(repo, 'checkout', '-q', '-b', 'tmp-land');
-  write(repo, 'app.js', ['a', 'b', 'const x = 3;', 'c', 'd2', 'e']); const t2 = commitAll(repo, 'feat(x): rebased with edits');
-  g(repo, 'checkout', '-q', 'main'); g(repo, 'merge', '-q', '--ff-only', 'tmp-land'); g(repo, 'branch', '-q', '-D', 'tmp-land');
-  g(repo, 'branch', '-q', '-f', 'feat/x', t2); g(repo, 'update-ref', 'refs/remotes/origin/feat/x', t2);
+  // a hand landing: one more commit on the branch (it still holds the DONE tip, DEC-a-682) is pushed (its ref moves), then merged onto main
+  write(repo, 'y.md', ['# y']); commitAll(repo, 'main moves');
+  g(repo, 'checkout', '-q', 'feat/x');
+  write(repo, 'app.js', ['a', 'b', 'const x = 3;', 'c', 'd', 'export { x };', 'e']); const t2 = commitAll(repo, 'feat(x): edits after DONE');
+  g(repo, 'update-ref', 'refs/remotes/origin/feat/x', t2);
+  g(repo, 'checkout', '-q', 'main'); g(repo, 'merge', '-q', '--no-ff', '-m', 'land feat/x', 'feat/x');
   assert.equal(row(state, repo).state, 'merged');
   const out = latchMerged(state, { project: project(repo, state), nowMs: NOW });
   assert.deepEqual(out.map(c => [c.ev, c.why]), [['merged', 'merged']]);
   deleteBranch(repo);
   const r = row(state, repo);
   assert.equal(r.state, 'merged', 'the latch holds'); assert.equal(r.merged_how, 'git'); assert.equal(r.merge_latched, true); assert.equal(r.merge_commit, t2);
-  assert.equal(row(bare, repo).state, 'unknown', 'without the latch only the DONE tip is left: Norn cannot tell (never plain done)');
+  const b = row(bare, repo);   // a ref holding the DONE tip on main puts the DONE tip on main: unlatched, git reads only that
+  assert.equal(b.state, 'merged'); assert.equal(b.merge_latched, false); assert.equal(b.merge_commit, tip, 'without the latch only the DONE tip is left');
 });
 
 test('a squash or conflict-resolved landing reads merged (equivalent)', () => {
