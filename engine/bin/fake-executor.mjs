@@ -32,7 +32,7 @@ if (mode === 'orphan' && brief.pids) {
   spawnSync(process.execPath, ['-e', inner], { stdio: 'ignore', windowsHide: true });
 }
 if (mode === 'sleep' && brief.pids) {
-  const g = spawn(process.execPath, ['-e', `setTimeout(() => {}, ${ms})`], { stdio: 'ignore' });
+  const g = spawn(process.execPath, ['-e', `setTimeout(() => {}, ${ms})`], { stdio: 'ignore', windowsHide: true });
   // atomic: a test reads the file the moment it exists, and a stop can kill this process mid-write (an empty pids file)
   fs.writeFileSync(brief.pids + '.tmp', JSON.stringify({ pid: process.pid, grandchild: g.pid }));
   fs.renameSync(brief.pids + '.tmp', brief.pids);
