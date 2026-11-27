@@ -5,6 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { startRun, queueRun, readiness, fillAll, hbPath, capacityView, RunRefused } from '../engine/lib/runs.mjs';
 import { slotVerdict, sharesProblem, shareOf } from '../engine/lib/share.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
@@ -139,4 +140,21 @@ test('a typed executor: a direct start never passes an older queued run on the s
   const r = startRun(norn.opts({ ...grok, queue: true, resources: busy }));
   assert.equal(r.queued, true);
   assert.match(r.why, new RegExp(`^1 queued run\\(s\\) of the same or a higher priority go first: norn ${old} P1 #1`));
+});
+
+// ---------- chat-replies-lost part 3: a stale beat whose supervisor still lives holds its Claude slot ----------
+const deadPid = () => spawnSync(process.execPath, ['-e', ''], { windowsHide: true }).pid;   // a pid that has exited (heartbeat.test.mjs)
+test('cap 5: 4 running runs with stale beats and output plus 1 swept lost (stale) hold the pool while a pid lives; dead pids leave room', () => {
+  const run = pid => {
+    const m = machine({ max_claude_workers: 5 });
+    const norn = m.project('norn');
+    const stale = id => { fs.writeFileSync(hbPath(norn.state, id), JSON.stringify({ run: id, supervisor_pid: pid })); const old = new Date(Date.now() - 300e3); fs.utimesSync(hbPath(norn.state, id), old, old); };
+    for (let i = 0; i < 4; i++) stale(norn.live());   // no log: no second signal, so not hbLate either
+    const lost = norn.live(); stale(lost);
+    record(norn.state, { kind: 'run', ev: 'lost', id: lost, by: 'launcher', data: { why: 'no heartbeat for 300 s', cause: 'stale', supervisor_pid: pid } });
+    assert.equal(norn.item(lost).state, 'lost');
+    return norn.row(norn.queue());
+  };
+  assert.match(run(process.pid).terms.join(), /^cap: 5 claude workers running, budget max_claude_workers=5/);
+  assert.equal(run(deadPid()).ready, true, 'every pid gone: the runs are dead, their slots free');
 });
