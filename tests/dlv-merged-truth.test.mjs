@@ -8,7 +8,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { record } from '../engine/lib/records.mjs';
 import { deliverablesView, latchMerged, loadDeliverables } from '../engine/lib/deliverables.mjs';
-import { dlvMerged } from '../engine/lib/dlvmerge.mjs';
+import { dlvMerged, judge, repoScanner } from '../engine/lib/dlvmerge.mjs';
 import { contentOnMain, makeGit, scanRepo } from '../engine/lib/dlvgit.mjs';
 import { makeEval } from '../engine/lib/after.mjs';
 import { digest } from '../engine/lib/digest.mjs';
@@ -185,4 +185,28 @@ test('C9: a git failure is not cached as an answer: the next scan asks again and
   const good = ask(makeGit());
   assert.deepEqual([good.i.behind, good.i.ahead, good.i.native, good.r.clean, good.s.installed], [0, 2, true, true, [tip]]);
   assert.equal(good.s.onBase(tip, good.s.mainSha), false); assert.equal(good.s.onBase(tip, tip), true);
+});
+
+// DLV-b-107 (DEC-a-682): a lane restarted on its old branch name; the remote copy still pointed at an old commit already on main while
+// the DONE tip sat on the local branch off main. A branch ref is the deliverable's tip only when it holds the DONE tip.
+test('a stale remote copy on main never reads a deliverable merged: the ref that holds the DONE tip is its tip', () => {
+  const repo = tmp('repo');
+  g(repo, 'init', '-q', '-b', 'main'); g(repo, 'config', 'commit.gpgsign', 'false');
+  write(repo, 'app.js', ['a']); const A = commitAll(repo, 'A');
+  g(repo, 'checkout', '-q', '-b', 'feat/s'); write(repo, 'app.js', ['a', 'b']); const B = commitAll(repo, 'B');
+  g(repo, 'update-ref', 'refs/remotes/origin/feat/s', A); g(repo, 'checkout', '-q', 'main');
+  const state = tmp('state'), id = mkDlv(state, { repo, branch: 'feat/s', tip: B, delivers: 's', done_utc: at(-10).toISOString() });
+  record(state, { kind: 'deliverable', ev: 'done', id, by: 'launcher', data: { tip: B } }, { now: () => at(-9), views: false });
+  const cfg = { repo, main: 'main', remote: 'origin', native: null, history: [] }, git = makeGit();
+  const ask = () => judge(loadDeliverables(state)[id], repoScanner({ cfg, cache: {}, git, install: null }).get(repo), { cfg, git });
+  let j = ask();
+  assert.equal(j.merge, null, 'the stale origin/feat/s on main is not this work');
+  assert.deepEqual([j.g.tip, j.g.ahead, j.g.exists], [B, 1, true]);
+  // pushed, then one more commit: the remote holds the DONE tip and is read first
+  g(repo, 'checkout', '-q', 'feat/s'); write(repo, 'app.js', ['a', 'b', 'c']); const C = commitAll(repo, 'C'); g(repo, 'checkout', '-q', 'main');
+  g(repo, 'update-ref', 'refs/remotes/origin/feat/s', C);
+  j = ask(); assert.equal(j.merge, null); assert.deepEqual([j.g.tip, j.g.ahead], [C, 2]);
+  // B merged to main (the remote stale at A again, the local branch at B): merged
+  g(repo, 'update-ref', 'refs/remotes/origin/feat/s', A); g(repo, 'branch', '-q', '-f', 'feat/s', B); g(repo, 'merge', '-q', '--ff-only', B);
+  j = ask(); assert.equal(j.merge?.how, 'git'); assert.equal(j.g.tip, B);
 });
