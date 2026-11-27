@@ -24,6 +24,7 @@ const localMd = d => `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHo
 const N = (x, d) => Number(x).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
 const ps = v => (v === undefined || v === null ? '' : String(v));   // PowerShell renders $null as ''
 const cs = capText;   // a cap: unset = no limit, said so (META-OOTB F-3: never an empty cap)
+const dash = v => v ?? '-';   // a run field the run never set
 
 // a run's last NOTES marker; null = no NOTES file (its line is left out: DEC-a-679)
 function lastMarker(notes) {
@@ -100,13 +101,13 @@ function runLines(items, state, now, lastCk) {
 // one run: a single line when it is settled (ended before the last tick and reviewed), else the full entry with NOTES and log
 function runLine(r, lastCk, rel) {
   const d = r.data, last = r.history.at(-1);
-  const end = r.history.find(h => ['end', 'lost', 'kill'].includes(h.ev));
+  const end = r.history.find(h => ['end', 'lost', 'kill'].includes(h.ev)), ed = end?.data || {};
   const isNew = end && Date.parse(end.ts) > lastCk.getTime() ? 'NEW ' : '';
   const unrev = ['exited', 'lost', 'killed'].includes(r.state) && !r.review;   // the Records block's "unreviewed"
-  if (r.state !== 'running' && !isNew && !unrev) return [`- ${r.id} ${d.lane ?? '-'} ${r.state}/${end?.data?.outcome ?? r.state}`];
+  if (r.state !== 'running' && !isNew && !unrev) return [`- ${r.id} ${dash(d.lane)} ${r.state}/${ed.outcome ?? r.state}`];
   const what = r.state === 'running' ? `RUNNING since ${r.created}` : r.state === 'exited'
-    ? `EXITED outcome=${end.data.outcome} exit=${end.data.exit ?? '-'} end=${end.ts}` : `${r.state.toUpperCase()} ${last.ts}${end?.data?.why ? ' (' + end.data.why + ')' : ''}`;
-  const out = [`- ${isNew}**${r.id}** ${d.lane ?? '-'} ${d.executor ?? d.kind}: ${what} | ${d.model ?? '-'} ${d.effort ?? '-'} | brief ${rel(d.brief)}`];
+    ? `EXITED outcome=${ed.outcome} exit=${dash(ed.exit)} end=${end.ts}` : `${r.state.toUpperCase()} ${last.ts}${ed.why ? ' (' + ed.why + ')' : ''}`;
+  const out = [`- ${isNew}**${r.id}** ${dash(d.lane)} ${d.executor ?? d.kind}: ${what} | ${dash(d.model)} ${dash(d.effort)} | brief ${rel(d.brief)}`];
   const mk = d.kind !== 'checkin' && lastMarker(d.notes);
   if (mk) out.push(`  - NOTES ${mk}`);
   out.push(`  - log ${rel(d.log)}${r.state !== 'running' && d.final ? ' | final ' + rel(d.final) : ''}`);
