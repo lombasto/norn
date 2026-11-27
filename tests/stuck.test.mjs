@@ -183,5 +183,6 @@ test('review brief + replay: the brief names the first diagnosis, the stop reaso
   const b = reviewBrief('RM-7', { ...node, ...derive(node, W) }, reach(node, W).runs);
   assert.match(b, /## The first diagnosis\nRUN-\d+ \(FIX, stopped\): the diagnosis: cause A/);
   assert.match(b, /Is the approach wrong\?/); assert.match(b, /Which diagnosed cause is still open\?/); assert.match(b, /--approach-review RM-7/);
+  assert.match(b, /role worker, stage APPROACH-REVIEW\) you may record exactly this one decision yourself; the owner may record it too/, 'DEC-a-682 item 5: the run records it');
   assert.deepEqual(replayLines([node], W, W.stuck, reach), [`RM-7: ${iso(T0 + 5 * H).slice(0, 16)}Z stopped_rounds = 3`, `RM-7: ${iso(T0 + 72 * H).slice(0, 16)}Z days_without_merge = 3`]);
 });

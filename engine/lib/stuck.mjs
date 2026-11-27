@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { POLICY_DEFAULTS } from './policy.mjs';
 import { isMergeRun } from './checkins.mjs';
-import { loadState, authorOf } from './records.mjs';
+import { loadState, authorOf, REVIEW_STAGE } from './records.mjs';
 
 const DAY = 864e5;
 const OWNER = ['owner', 'dashboard'];
@@ -119,7 +119,6 @@ export const stuckWake = (state, why) => flagsOpen(state).filter(x => String(why
 
 /** norn run: the refusal of a further round on a stuck item (lane linked to it, or --item); null = go. The review run itself
  * (stage APPROACH-REVIEW on another executor / model than the stuck rounds) is the way out, so it goes. */
-export const REVIEW_STAGE = 'APPROACH-REVIEW';
 export function stuckRefusal(state, { lane, item, stage, executor, model } = {}) {
   const other = x => !(x.rounds || []).some(r => r.executor === (executor ?? null) && r.model === (model ?? null));
   const hit = flagsOpen(state).find(x => (x.id === item || (lane && x.lanes.includes(lane))) && !(String(stage || '').toUpperCase() === REVIEW_STAGE && other(x)));
@@ -138,7 +137,8 @@ export function reviewBrief(id, node, runs) {
     '2. Which diagnosed cause is still open? Name each cause of the first diagnosis and whether a later round removed, kept or never touched it.',
     '3. If many hand-offs fell on one problem, say whether one large-context run should hold it.', '',
     `Record the answer: norn rec add decision --lane <lane> --question "${id} approach review" --choice "<keep | change: ...>" --why "<...>" --approach-review ${id}`,
-    'You must be the owner, or a run of another executor or model than the stuck rounds.', '',
+    `As this review run (role worker, stage ${REVIEW_STAGE}) you may record exactly this one decision yourself; the owner may record it too.`,
+    'It frees the item only from the owner or from a run of another executor or model than the stuck rounds.', '',
     'Scope: none (a review; no code). Tests: none. Done: the decision recorded.'].join('\n');
 }
 
