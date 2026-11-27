@@ -2,7 +2,7 @@
 Paths: {{paths}}
 META = {{norn}}   (the records CLI; META_STATE / META_ROLE=checkin / META_PROJECT are already set for you)
 Budget: small. Read only what is listed (tail / line ranges, never whole long files).
-Controller hand-off: start no new step past ~90k; hand off at ~110k; never past ~150k. <!-- policy:context.controller -->
+Controller hand-off: start no new step past ~270k; hand off at ~300k; never past ~350k. <!-- policy:context.controller -->
 
 ## 1. Read (in this order, nothing else unless a step needs it)
 - STATUS {{status}} (fresh, from "norn status"; its "## Records" block lists open / answered-unapplied questions, active
