@@ -89,6 +89,30 @@ export function weeklyEstimate(o, now = new Date(), { transcripts = true } = {})
   return { weekly: (inWeek ? Number(B.calib_pct) : 0) + pct, pct, all, per, anchor, inWeek, weekStartMs, next: resetIso ? nextReset(resetIso, now.getTime()) : null };
 }
 
+// DEC-a-679 (oh-checkin-diet S7): the ## Runs lines - running / NEW / unreviewed runs in full, the rest one line each; paths relative to STATE
+function runLines(items, state, now, lastCk) {
+  const rel = p => { if (!p) return '-'; const r = path.relative(state, p); return (r.startsWith('..') || path.isAbsolute(r) ? p : r).replace(/\\/g, '/'); };
+  const cut = now.getTime() - 12 * 3600000;
+  const mine = items.filter(i => i.kind === 'run' && i.data.kind !== 'interactive' && i.data.role !== 'helper' && (i.state === 'running' || Date.parse(i.updated) >= cut));
+  return mine.length ? mine.sort((a, b) => a.created.localeCompare(b.created)).flatMap(r => runLine(r, lastCk, rel)) : ['- (none)'];
+}
+
+// one run: a single line when it is settled (ended before the last tick and reviewed), else the full entry with NOTES and log
+function runLine(r, lastCk, rel) {
+  const d = r.data, last = r.history.at(-1);
+  const end = r.history.find(h => ['end', 'lost', 'kill'].includes(h.ev));
+  const isNew = end && Date.parse(end.ts) > lastCk.getTime() ? 'NEW ' : '';
+  const unrev = ['exited', 'lost', 'killed'].includes(r.state) && !r.review;   // the Records block's "unreviewed"
+  if (r.state !== 'running' && !isNew && !unrev) return [`- ${r.id} ${d.lane ?? '-'} ${r.state}/${end?.data?.outcome ?? r.state}`];
+  const what = r.state === 'running' ? `RUNNING since ${r.created}` : r.state === 'exited'
+    ? `EXITED outcome=${end.data.outcome} exit=${end.data.exit ?? '-'} end=${end.ts}` : `${r.state.toUpperCase()} ${last.ts}${end?.data?.why ? ' (' + end.data.why + ')' : ''}`;
+  const out = [`- ${isNew}**${r.id}** ${d.lane ?? '-'} ${d.executor ?? d.kind}: ${what} | ${d.model ?? '-'} ${d.effort ?? '-'} | brief ${rel(d.brief)}`];
+  const mk = d.kind !== 'checkin' && lastMarker(d.notes);
+  if (mk) out.push(`  - NOTES ${mk}`);
+  out.push(`  - log ${rel(d.log)}${r.state !== 'running' && d.final ? ' | final ' + rel(d.final) : ''}`);
+  return out;
+}
+
 /**
  * o: { state, project, providers? {name: claude-compatible entry}, budget, now?, projectsDir, usageJson {checkin: [globs], chat: [globs]}, cacheFile?, paused? [files], staleMs?,
  *      ci? {repo, workflow?, branch?, gh?, cacheFile?, now?} (project.json `ci`; prints the `CI <branch>:` line) }
@@ -128,23 +152,7 @@ export function buildStatus(o) {
   const sol = cx.filter(r => r.data.executor === 'codex-sol').length, astra = cx.filter(r => r.data.executor === 'codex-astra').length;
   // DEC-a-679 (oh-checkin-diet S7): only running / NEW / unreviewed runs in full, the rest one line each; paths relative to STATE
   L.push(`## Runs (NEW = ended since the last tick ${localMd(lastCk)}; full: running, NEW, unreviewed; paths relative to STATE; caps count the live runs of every project)`);
-  const rel = p => { if (!p) return '-'; const r = path.relative(o.state, p); return (r.startsWith('..') || path.isAbsolute(r) ? p : r).replace(/\\/g, '/'); };
-  const cut = now.getTime() - 12 * 3600000;
-  const mine = items.filter(i => i.kind === 'run' && i.data.kind !== 'interactive' && i.data.role !== 'helper' && (i.state === 'running' || Date.parse(i.updated) >= cut));
-  if (!mine.length) L.push('- (none)');
-  for (const r of mine.sort((a, b) => a.created.localeCompare(b.created))) {
-    const d = r.data, last = r.history.at(-1);
-    const end = r.history.find(h => ['end', 'lost', 'kill'].includes(h.ev));
-    const isNew = end && Date.parse(end.ts) > lastCk.getTime() ? 'NEW ' : '';
-    const unrev = ['exited', 'lost', 'killed'].includes(r.state) && !r.review;   // the Records block's "unreviewed"
-    if (r.state !== 'running' && !isNew && !unrev) { L.push(`- ${r.id} ${d.lane ?? '-'} ${r.state}/${end?.data?.outcome ?? r.state}`); continue; }
-    const what = r.state === 'running' ? `RUNNING since ${r.created}` : r.state === 'exited'
-      ? `EXITED outcome=${end.data.outcome} exit=${end.data.exit ?? '-'} end=${end.ts}` : `${r.state.toUpperCase()} ${last.ts}${end?.data?.why ? ' (' + end.data.why + ')' : ''}`;
-    L.push(`- ${isNew}**${r.id}** ${d.lane ?? '-'} ${d.executor ?? d.kind}: ${what} | ${d.model ?? '-'} ${d.effort ?? '-'} | brief ${rel(d.brief)}`);
-    const mk = d.kind !== 'checkin' && lastMarker(d.notes);
-    if (mk) L.push(`  - NOTES ${mk}`);
-    L.push(`  - log ${rel(d.log)}${r.state !== 'running' && d.final ? ' | final ' + rel(d.final) : ''}`);
-  }
+  L.push(...runLines(items, o.state, now, lastCk));
   L.push(`- claude workers alive: ${alive} / cap ${cs(B.max_claude_workers)}`);
   L.push(`- codex exec runs: ${cx.length} / cap ${cs(B.max_codex)}`);
   L.push(`- codex split: astra=${astra} / cap ${cs(astraCap)}; sol=${sol} / cap ${cs(solCap)}`);
