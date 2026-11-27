@@ -20,6 +20,7 @@ import { readSync, writeSync } from './claims.mjs';
 import { isWork } from './gate.mjs';
 import { isMergeRun } from './checkins.mjs';
 import { LIVE } from './lifecycle.mjs';
+import { pathLane } from './lanepaths.mjs';
 import { slopOn } from './policy.mjs';
 import { doorCheck, doorWhy, doorWarns } from './slop/door.mjs';
 import { noteMqWhy } from './mqwhy.mjs';
@@ -117,12 +118,9 @@ export function followerPrs(p, state, { git = makeGit(), gh, door } = {}) {
   const items = loadState(state).items, main = mergeConfig(p).main, memo = readSync(state, 'prs'), out = [], skips = {};
   const runs = Object.values(items).filter(r => r.kind === 'run' && r.data?.lane && isWork(r.data) && !isMergeRun(r.data)).sort((a, b) => runNum(a.id) - runNum(b.id));
   for (const l of Object.values(items)) {
-    if (l.kind !== 'lane' || !['active', 'done', 'archived'].includes(l.state)) continue;
+    if (l.kind !== 'lane') continue;
     const name = laneName(l.id, state), mine = runs.filter(r => r.data.lane === name), r = mine.at(-1);
-    if (!r || mine.some(x => LIVE.includes(x.state)) || r.state !== 'exited' || r.end?.outcome !== 'done') continue;
-    // DLV-a-237 (DEC-a-681): ci-fix lanes are reused and a check-in may not unarchive, so a DONE run can end on an archived lane: its
-    // work newer than the lane's last archive gets its PR; an archive after the run's end is the lane's closing word (no git, no gh)
-    if (l.state === 'archived' && !((r.history.findLast(h => h.ev === 'end')?.ts ?? '') > (l.history.findLast(h => h.ev === 'archive')?.ts ?? ''))) continue;
+    if (!r || mine.some(x => LIVE.includes(x.state)) || r.state !== 'exited' || r.end?.outcome !== 'done' || !pathLane(l, r)) continue;   // lanepaths.mjs: archived lanes
     const branch = r.end?.branch || r.data.branch, wt = r.data.worktree && fs.existsSync(r.data.worktree) ? r.data.worktree : null;
     if (!branch || branch === main || !wt) continue;
     const tip = git(wt, ['rev-parse', 'HEAD'], { allowFail: true })?.trim(), was = memo[branch];
