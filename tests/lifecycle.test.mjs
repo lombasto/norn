@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { record, loadState, recordsFile } from '../engine/lib/records.mjs';
-import { laneRules, tickLanes, lanesProbe, lanePolicy, laneHooks } from '../engine/lib/lifecycle.mjs';
+import { laneRules, tickLanes, lanesProbe, lanePolicy, laneHooks, lanePathsFile } from '../engine/lib/lifecycle.mjs';
 import { tickPaths } from '../engine/lib/lanepaths.mjs';
 import { lanesView, boardOf } from '../engine/lib/lanes.mjs';
 import { digest } from '../engine/lib/digest.mjs';
@@ -246,6 +246,26 @@ test('a DONE lane with an open deliverable and unpushed commits is pushed by the
   const row = lanesView(loadState(state), { all: true, now: T0 + 2 * H, ...laneHooks(state) }).find(x => x.name === 'ui-shell');
   assert.equal(row.path.text, `${dlv} open: in the merge queue`);
   assert.deepEqual(tickPaths(state, { project, now: T0 + 3 * H, cli: fakeCli(state, calls) }), [], 'pushed once');
+});
+
+// DLV-a-237 (DEC-a-683): a reused ci-fix lane runs while archived, so the step before followerPrs takes the same archived lanes: a DONE
+// run newer than the lane's last archive is pushed and gets its path row; a lane archived after its DONE run costs no git call.
+test('a DONE run on an archived lane is pushed and gets its path row; a lane archived after its DONE run is skipped with no git call', () => {
+  const t = mkTmp('lc-arch-'), state = path.join(t, 'state', 'p'), f = originFixture(t); fs.mkdirSync(state, { recursive: true });
+  const archive = (name, ms) => rec(state, { kind: 'lane', ev: 'archive', id: `L:${name}`, by: 'tick', data: { why: 'test' } }, { now: at(ms) });
+  const w = f.wt('late', 1, { push: false }), head = f.g(w, 'rev-parse', 'HEAD');
+  lane(state, 'late', T0); archive('late', T0 + H);
+  const id = start(state, 'late', T0 + 2 * H, { worktree: w });
+  rec(state, { kind: 'run', ev: 'end', id, by: 'launcher', data: { exit: 0, outcome: 'done', branch: 'lane/late', head } }, { now: at(T0 + 3 * H) });
+  rec(state, { kind: 'deliverable', ev: 'create', by: 'launcher', data: { repo: f.repo, branch: 'lane/late', tip: head, lane: 'late', run: id } });
+  const o = f.wt('old', 1, { push: false }); doneLane(state, f, 'old', o, T0); archive('old', T0 + 4 * H);
+  const dirs = [], git = (dir, args, opt) => { dirs.push(dir); try { return f.g(dir, ...args); } catch (e) { if (opt?.allowFail) return null; throw e; } };
+  const project = { name: 'p', file: path.join(t, 'project.json'), root: f.repo, briefs_dir: path.join(t, 'briefs') };
+  assert.deepEqual(tickPaths(state, { project, now: T0 + 5 * H, git, cli: fakeCli(state, []) }).map(x => [x.id, x.act]), [['L:late', 'pushed']]);
+  assert.equal(f.g(f.origin, 'rev-parse', 'lane/late'), head, 'the archived lane\'s DONE branch is on origin');
+  const paths = JSON.parse(fs.readFileSync(lanePathsFile(state), 'utf8')).paths;
+  assert.deepEqual(Object.keys(paths), ['late']); assert.equal(paths.late.state, 'pr');
+  assert.ok(!dirs.includes(o), 'no git call for the lane archived after its DONE run');
 });
 
 test('work not on main past 2 h with no merge step is a red finding on the Lanes page and in the digest', () => {
