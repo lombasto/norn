@@ -17,7 +17,7 @@ test('every setting has one home, help text, recommended value and cost line; sc
   }
   for(const g of ['agents','executors','context','iteration','budget','cadence','speed'])assert.ok(SETTINGS.some(s=>s.group===g),g);
   const v=settingsView(merged(budget(),policy()),{quietFile:'/x/common-rules.txt'});
-  assert.equal(v.find(s=>s.key==='policy.context.implementer.handoff_k').value,110,'defaults fill a missing policy block');
+  assert.equal(v.find(s=>s.key==='policy.context.implementer.handoff_k').value,300,'defaults fill a missing policy block');
   assert.equal(v.find(s=>s.key==='weekly_stop_pct').value,95);
   assert.equal(v.find(s=>s.key==='reserve_pct_for_doors').value,5,'machine default');
   assert.equal(v.find(s=>s.key==='policy.cadence.checkin_interval_min').home,'project.json policy.cadence.checkin_interval_min');
@@ -45,7 +45,7 @@ test('applySettings validates (400) and changes only the named keys; split retur
 test('generated prompt lines come from the policy and rewrite only marked lines',()=>{
   const p=merged(budget(),structuredClone(POLICY_DEFAULTS));p.policy.context.implementer.handoff_k=100;p.policy.iteration.escalation_multiplier=3;
   const lines=generatedLines(p);
-  assert.match(lines['context.implementer'],/past ~90k; at ~100k/);assert.match(lines['iteration'],/~3x its round estimate/);
+  assert.match(lines['context.implementer'],/past ~270k; at ~100k/);assert.match(lines['iteration'],/~3x its round estimate/);
   assert.match(lines['checkin'],/weekly guard 95 %, reserve 5 % for doors, desired burn 0.4 %\/h/,'machine keys feed the check-in line');
   const doc='keep 1\nHANDOFF: old ~90k ~110k <!-- policy:context.implementer -->\nkeep 2 <!-- policy:unknown -->\n';
   const r=rewriteMarked(doc,lines);
