@@ -258,7 +258,7 @@ test('C5 Settings rows: harness, model, effort, idle minutes, hold length, raw s
   assert.throws(() => applySettings({}, { chat_idle_min: 0 }), /chat_idle_min/);
   assert.throws(() => applySettings({}, { chat_raw_shell: 'yes' }), /chat_raw_shell/);
   assert.equal(applySettings({}, { chat_model: 'claude-sonnet-5-5' }).chat_model, 'claude-sonnet-5-5');
-  assert.deepEqual(POLICY_DEFAULTS.context.controller, CTX);
+  assert.deepEqual(POLICY_DEFAULTS.context.controller, { no_new_step_k: 270, handoff_k: 300, hard_max_k: 350 });
 });
 
 test('C5 settings live through the dashboard: a Settings save changes the next chat start (model, effort) without a dashboard restart', async () => {
