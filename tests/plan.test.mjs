@@ -2,7 +2,7 @@
 process.env.TZ = 'UTC';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPlan, dayClock, labelOf, estimator, forecastOf, formatPlan } from '../engine/lib/plan.mjs';
+import { buildPlan, dayClock, labelOf, estimator, forecastOf } from '../engine/lib/plan.mjs';
 import { queueOf } from '../engine/lib/runs.mjs';
 import { waitWords } from '../engine/lib/waitwords.mjs';
 
