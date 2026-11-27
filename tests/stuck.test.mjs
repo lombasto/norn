@@ -141,6 +141,24 @@ test('run refusal: a round on a stuck item is refused until an approach review n
   assert.throws(() => record(state, { kind: 'decision', ev: 'create', by: 'owner', data: { lane: 'water', question: 'q', choice: 'c', why: 'w', approach_review: 'DEC-1' } }), /approach_review must name a roadmap item/);
 });
 
+test('DEC-a-682 item 5: a worker run of stage APPROACH-REVIEW records its one decision itself; it clears the flag. Every other worker decision is refused, saying why', () => {
+  const { state } = sandbox();
+  stuckSweep(state, [flagged()]);
+  const start = (stage, executor = 'codex', model = 'm-b') => record(state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', lane: 'water', stage, executor, model } }).id;
+  const data = (o = {}) => ({ lane: 'water', question: 'RM-7 approach review', choice: 'change', why: 'w', approach_review: 'RM-7', ...o });
+  const dec = (run, d = data()) => record(state, { kind: 'decision', ev: 'create', by: 'worker', data: d }, { run, now: () => new Date(T0 + 9 * H) });
+  const fix = start('FIX'), review = start('approach-review'), bare = start('APPROACH-REVIEW');
+  assert.throws(() => dec(fix), /role worker may record one decision, only from stage APPROACH-REVIEW with --approach-review RM-n: RUN-\S+ is stage FIX/, 'another stage');
+  assert.throws(() => dec(null), /role worker may record one decision.*no run id/, 'no run');
+  const { approach_review: _a, ...noReview } = data();
+  assert.throws(() => dec(bare, noReview), /role worker may record one decision.*no --approach-review/, 'no approach_review');
+  assert.match(stuckRefusal(state, { lane: 'water' }), /owed/, 'nothing recorded yet');
+  const id = dec(review).id;
+  assert.equal(stuckRefusal(state, { lane: 'water' }), null, 'the review run\'s decision (another executor / model) frees the item');
+  assert.throws(() => dec(review, data({ choice: 'keep' })), new RegExp(`role worker may record one decision.*${review} already recorded ${id}`), 'a second decision by that run');
+  assert.throws(() => record(state, { kind: 'decision', ev: 'supersede', id, by: 'worker', data: { by: id, why: 'w' } }, { run: review }), /role worker may not decision supersede/, 'no other worker write widens');
+});
+
 test('norn run: a round on a stuck item is REFUSED (exit 7); the owner\'s approach review lets it go', () => {
   const { t, state } = sandbox();
   stuckSweep(state, [flagged({ flag: { ts: iso(Date.now() - H), why: ['3 stopped in a row'] } })]);   // the CLI's decision is dated now
