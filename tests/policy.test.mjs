@@ -31,8 +31,8 @@ test('every setting has one home, help text, recommended value and cost line; sc
 
 test('applySettings validates (400) and changes only the named keys; split returns the two files',()=>{
   const b=merged(budget(),policy());
-  const out=applySettings(b,{'policy.context.implementer.handoff_k':100,'max_sol':4,'policy.speed_mode.D':false,'policy.executors.review.executor':'kestrel-implementer'},{agents:['kestrel-implementer','kestrel-planner','kestrel-runner']});   // a project's own agents (META-OOTB F-2: extra.agents)
-  assert.equal(out.policy.context.implementer.handoff_k,100);assert.equal(out.max_sol,4);assert.equal(out.policy.speed_mode.D,false);
+  const out=applySettings(b,{'policy.context.implementer.handoff_k':310,'max_sol':4,'policy.speed_mode.D':false,'policy.executors.review.executor':'kestrel-implementer'},{agents:['kestrel-implementer','kestrel-planner','kestrel-runner']});   // a project's own agents (META-OOTB F-2: extra.agents)
+  assert.equal(out.policy.context.implementer.handoff_k,310);assert.equal(out.max_sol,4);assert.equal(out.policy.speed_mode.D,false);
   assert.equal(out.policy.executors.review.executor,'kestrel-implementer');assert.equal(out.policy.dispatch_window.order[0],'x','untouched keys survive');
   assert.equal(b.max_sol,5,'input not mutated');
   const s=split(out);assert.equal(s.budget.max_sol,4);assert.equal(s.budget.policy,undefined);assert.equal(s.policy.speed_mode.D,false);
@@ -43,13 +43,13 @@ test('applySettings validates (400) and changes only the named keys; split retur
 });
 
 test('generated prompt lines come from the policy and rewrite only marked lines',()=>{
-  const p=merged(budget(),structuredClone(POLICY_DEFAULTS));p.policy.context.implementer.handoff_k=100;p.policy.iteration.escalation_multiplier=3;
+  const p=merged(budget(),structuredClone(POLICY_DEFAULTS));p.policy.context.implementer.handoff_k=310;p.policy.iteration.escalation_multiplier=3;
   const lines=generatedLines(p);
-  assert.match(lines['context.implementer'],/past ~270k; at ~100k/);assert.match(lines['iteration'],/~3x its round estimate/);
+  assert.match(lines['context.implementer'],/past ~270k; at ~310k/);assert.match(lines['iteration'],/~3x its round estimate/);
   assert.match(lines['checkin'],/weekly guard 95 %, reserve 5 % for doors, desired burn 0.4 %\/h/,'machine keys feed the check-in line');
   const doc='keep 1\nHANDOFF: old ~90k ~110k <!-- policy:context.implementer -->\nkeep 2 <!-- policy:unknown -->\n';
   const r=rewriteMarked(doc,lines);
-  assert.equal(r.text.split('\n')[0],'keep 1');assert.match(r.text.split('\n')[1],/~100k.*<!-- policy:context\.implementer -->$/);
+  assert.equal(r.text.split('\n')[0],'keep 1');assert.match(r.text.split('\n')[1],/~310k.*<!-- policy:context\.implementer -->$/);
   assert.deepEqual(r.changed,['context.implementer']);assert.deepEqual(r.unknown,['unknown']);
   assert.equal(rewriteMarked('a\r\nb <!-- policy:iteration -->\r\n',lines).text.split('\r\n').length,3,'CRLF kept');
 });
