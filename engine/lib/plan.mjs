@@ -199,8 +199,7 @@ export function buildPlan({ project = null, runs = [], ready = [], status = '', 
   const map = Object.fromEntries(runs.map(r => [r.id, r])), rowOf = new Map(ready.map(r => [r.id, r]));
   const est = estimator(runs, { per: Number(budget.cacheR_per_pct) || null }), mergeMin = est.mergeMin;
   const label = makeLabeler({ project, runs, roadmap, lanes });
-  const nameOf = id => { const r = map[id]; return r ? label({ ...r.data, id }) : id; };
-  const words = t => waitWords(t, { label: nameOf, now, clock: dayClock }).text;
+  const words = t => waitWords(t, { label: id => (map[id] ? label({ ...map[id].data, id }) : id), now, clock: dayClock }).text;
   const queued = queueOf(runs, pins);
   const at = ms => ({ at: new Date(ms).toISOString(), word: `~${dayClock(ms, now)}` });
 

@@ -125,6 +125,15 @@ test('literal samples: every term kind has its code and words, never the raw ter
   assert.equal(waitWords('reserved: the free Claude slot is kept for other (reserve_claude_workers, 1 owed)').setting, 'reserve_claude_workers');
 });
 
+test('a term of a known kind in a form no pattern reads gets the kind\'s plain sentence, the raw term as its reason', () => {
+  const res = 'resources: free RAM 1 GB', cap = 'cap: a slot form the walk does not write yet';
+  assert.deepEqual([waitWords(res).code, waitWords(res).text, waitWords(res).reason], ['busy', 'held: CPU / memory gate', res]);
+  assert.deepEqual([waitWords(cap).code, waitWords(cap).text, waitWords(cap).reason], ['cap', 'waits for a worker slot', cap]);
+  assert.equal(waitWords(res).setting, null, 'no pattern read it: no setting to point at');
+  assert.equal(waitWords('resources: free RAM 2.0 GB < fill.min_free_gb 4').setting, 'policy.fill.min_free_gb', 'the exact form keeps its setting');
+  assert.equal(waitWords('cap: 5 claude workers running, budget max_claude_workers=5').setting, 'max_claude_workers', 'the exact form keeps its setting');
+});
+
 test('no share / reserved / ceiling / claim / collide term returns its raw string', () => {
   const raw = Object.keys(LITERAL).filter(t => /^(share|reserved|ceiling|claim|collide):/.test(t));
   assert.equal(raw.length, 7);
