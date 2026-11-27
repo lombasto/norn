@@ -55,8 +55,14 @@ export function briefFacts(file) {
   try { text = file ? fs.readFileSync(file, 'utf8') : null; } catch { /* a brief that is gone: nothing declared */ }
   if (text == null) return { scope: null, why: 'no brief file', exclusive: [], tests: null, done: null, items: [], names: {} };
   const r = parseReady(text), s = readScope(r.scope);
-  return { scope: s.scope, why: s.why ?? null, exclusive: r.exclusive, tests: r.tests, done: r.done, items: ids(heading(text), /\bRM-\d+\b/g),
-    names: { runs: ids(text, new RegExp(`\\b${NID('RUN')}\\b`, 'g')), dlvs: ids(text, new RegExp(`\\b${NID('DLV')}\\b`, 'g')), lanes: [...String(text).matchAll(/\blane `?([A-Za-z0-9][A-Za-z0-9_.-]*)`?/g)].map(m => m[1]) } };
+  return { scope: s.scope, why: s.why ?? null, exclusive: r.exclusive, tests: r.tests, done: r.done, items: ids(heading(text), /\bRM-\d+\b/g), names: namesOf(text, r.builds_on) };
+}
+const RUN_RE = () => new RegExp(`^${NID('RUN')}$`), DLV_RE = () => new RegExp(`^${NID('DLV')}$`);
+/** the open work a brief names (DEC-a-683): its Builds on: line alone when it has one (declared: a bare word is a lane), else a search of
+ *  the text - every RUN / DLV id and the word after "lane" (not a `--lane` flag value: a cited command builds on nothing) */
+function namesOf(text, on) {
+  if (on) { const run = RUN_RE(), dlv = DLV_RE(); return { runs: on.filter(w => run.test(w)), dlvs: on.filter(w => dlv.test(w)), lanes: on.filter(w => !run.test(w) && !dlv.test(w) && !/^lane$/i.test(w)), declared: true }; }
+  return { runs: ids(text, new RegExp(`\\b${NID('RUN')}\\b`, 'g')), dlvs: ids(text, new RegExp(`\\b${NID('DLV')}\\b`, 'g')), lanes: [...String(text).matchAll(/(?<![-\w])lane `?([A-Za-z0-9][A-Za-z0-9_.-]*)`?/g)].map(m => m[1]) };
 }
 
 // ---------- git facts ----------
