@@ -7,7 +7,7 @@
 // one day-aware clock ("today 21:41", "Fri 02:13") with the zone named once, plain names (lane title, else the lane humanized).
 import fs from 'node:fs';
 import path from 'node:path';
-import { readEvents, fold, recordsFile, loadShared, laneNameIn, homeOf, idNum, PRIORITIES, NID, RUN_ID_RE } from './records.mjs';
+import { readEvents, fold, recordsFile, loadShared, laneNameIn, homeOf, idNum, PRIORITIES, NID } from './records.mjs';
 import { queueOf, readiness } from './runs.mjs';
 import { follow } from './after.mjs';
 import { isMergeStage } from './usageguard.mjs';
@@ -16,7 +16,7 @@ import { deliverablesView, mergeBacklog, backlogMax } from './deliverables.mjs';
 import { loadRoadmap } from './roadmap.mjs';
 import { lanePins } from './crew.mjs';
 import { landState, LAND_WORDS } from './lanes.mjs';
-import { holdReason } from './holds.mjs';
+import { waitWords } from './waitwords.mjs';
 
 const MIN = 60000, DAY = 24 * 3600000;
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -150,30 +150,7 @@ export function estimator(runs, { per = null } = {}) {
   return est;
 }
 
-// ---------- hold-ups: the fill walk's terms in plain words ----------
-const AFTER_WORD = { merged: 'merge', done: 'finish', ended: 'end' };
-/** one readiness term -> plain words; the machine-level terms (usage, PAUSED, a pinned dwarf, the crew store) are holds.mjs holdReason's
- * short form, so one parser reads them. ctx: { runs (array), now, label (run data -> name) } */
-export function holdWords(term, { runs = [], now = Date.now(), label = labelOf } = {}) {
-  const t = String(term), byId = id => runs.find(r => r.id === id);
-  const name = id => { const r = byId(id); return r ? label({ ...r.data, id }) : id; };
-  let m; const after = (k, P) => t.match(new RegExp(`^after ${k}:(${NID(P)}):(\\w+) unmet$`));
-  if ((m = after('run', 'RUN'))) return `waits for ${name(m[1])} to ${AFTER_WORD[m[2]] ?? m[2]}`;
-  if ((m = after('q', 'Q'))) return m[2] === 'applied' ? `waits for your answer (${m[1]}) to be applied` : `waits for your answer (${m[1]})`;
-  if ((m = after('dlv', 'DLV'))) return `waits for finished work ${m[1]} to reach main`;
-  if ((m = after('dir', 'DIR'))) return `waits for instruction ${m[1]} to be done`;
-  if ((m = t.match(/^not_before (\S+)$/))) return `not before ${dayClock(Date.parse(m[1]), now)}`;
-  if (t.startsWith('cap ') || t.startsWith('cap:')) return 'waits for a worker slot';
-  if ((m = t.match(/^worktree held by (\S+)/))) return `waits for its folder (${RUN_ID_RE.test(m[1]) ? name(m[1]) : 'another run'} is writing there)`;
-  if ((m = t.match(/^lane worktree \S+ held by (\S+)/))) return `waits for its lane's folder (${RUN_ID_RE.test(m[1]) ? name(m[1]) : 'another run'} is writing there)`;
-  if ((m = t.match(/^merge slots full: (\d+) merge/))) return `waits for a merge slot (${m[1]} merge${m[1] === '1' ? '' : 's'} running)`;
-  if (/^MERGE /.test(t)) return 'held: its lane is still writing (a merge needs a prepared merge brief)';
-  if (t.startsWith('labels ')) return 'offered to another machine';
-  if (t.startsWith('resources:')) return 'held: CPU / memory gate';
-  if (t.startsWith('withdraw:')) return 'withdrawn: a condition can no longer be met';
-  if (t.startsWith('needs a ruling: ')) return `needs a ruling (the check-in repairs it): ${t.slice(16)}`;   // the check-in repairs a term it can rule on
-  return holdReason(t, { name }).short;
-}
+// ---------- hold-ups: the fill walk's terms in plain words (waitwords.mjs, the one word module) ----------
 const isHeld = t => /^(usage:|resources:|PAUSED|MERGE )/.test(t);
 
 // ---------- forecast: STATUS.md (the file the usage guard reads) + the budget ----------
@@ -222,7 +199,8 @@ export function buildPlan({ project = null, runs = [], ready = [], status = '', 
   const map = Object.fromEntries(runs.map(r => [r.id, r])), rowOf = new Map(ready.map(r => [r.id, r]));
   const est = estimator(runs, { per: Number(budget.cacheR_per_pct) || null }), mergeMin = est.mergeMin;
   const label = makeLabeler({ project, runs, roadmap, lanes });
-  const ctx = { runs, now, label }, words = t => holdWords(t, ctx);
+  const nameOf = id => { const r = map[id]; return r ? label({ ...r.data, id }) : id; };
+  const words = t => waitWords(t, { label: nameOf, now, clock: dayClock }).text;
   const queued = queueOf(runs, pins);
   const at = ms => ({ at: new Date(ms).toISOString(), word: `~${dayClock(ms, now)}` });
 

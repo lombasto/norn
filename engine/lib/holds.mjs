@@ -7,11 +7,9 @@
 // keeps only the episode (term, since, notified); the tick deletes it once the walk no longer holds, and the item and the row leave.
 import fs from 'node:fs';
 import path from 'node:path';
-import { billingOf } from './billing.mjs';
 import { isMergeStage } from './usageguard.mjs';
 import { queueSpecPath, liveBudget } from './runs.mjs';
-import { PAUSE_MODES } from './pausemode.mjs';
-import { NID } from './records.mjs';
+import { waitWords, hhmm } from './waitwords.mjs';
 
 export const NOTICE_MIN = 60;
 /** the minutes a whole hold lasts before it is surfaced: project policy.holds.notice_min (a Settings row), else NOTICE_MIN */
@@ -58,34 +56,6 @@ export function trackHold(state, rows, { now = Date.now() } = {}) {
   return rec;
 }
 
-const hhmm = iso => `${String(iso).slice(0, 16).replace('T', ' ')}Z`;
-/** a machine-level term (or a pinned dwarf / crew store wait) in plain words, the one parser of them: { short (plan.mjs holdWords: the
- * Lanes page's hold-up), reason, fix, clears (null = only the fix clears it), setting / command / file / resume }; name: run id -> its label */
-export function holdReason(term, { billing = null, status = '', name = id => id } = {}) {
-  const bm = billingOf({ billing }), t = String(term);
-  const reset = status.match(/reset (\d{4}-\d\d-\d\dT\d\d:\d\dZ)/)?.[1] ?? null;
-  let m;
-  if (t === 'usage: weekly unknown') return { short: 'held: weekly usage not measured yet (on API billing, set Billing to api)', ...bm && bm.type !== 'api'
-    ? { reason: `the weekly usage is not measured yet, and the usage guard holds Claude work it cannot measure (billing: ${bm.label})`, clears: null, command: 'norn calib --pct N',
-      fix: `run norn calib --pct N, N = the weekly % claude.ai shows (Settings > Usage), so Norn can measure the week; on API billing set Billing (Settings) to api instead`, setting: 'billing' }
-    : { reason: 'the weekly usage is not measured yet, and the usage guard holds Claude work it cannot measure (Billing is not set)', clears: null, command: 'norn calib --pct N', setting: 'billing',
-      fix: 'set Billing (Settings): on API billing choose api (no weekly limit, nothing to measure); on a plan (pro, max-5x, max-20x, ultra) choose it, then run norn calib --pct N with the weekly % claude.ai shows' } };
-  if (t === 'usage: RATE_OK unknown') return { short: 'held: hourly usage not measured yet', reason: 'the hourly usage rate is not measured yet (STATUS.md has no RATE_OK line)', clears: null, command: 'norn status',
-    fix: 'run norn status (the tick writes STATUS.md every pass; the tick log says why it did not); on API billing set Billing (Settings) to api', setting: 'billing' };
-  if (t === 'usage: RATE_OK=0') return { short: 'held: usage over the hourly cap', reason: 'Claude usage over the last 2 h is above the hourly rate cap', setting: 'usage_rate_cap_pct_per_h',
-    clears: 'by itself as the trailing 2 h rate falls under the cap', fix: 'wait, or raise the usage rate cap (Settings)' };
-  if ((m = t.match(/^usage: weekly ([\d.]+) % >= guard ([\d.]+) %$/))) return { short: `held: weekly usage at the stop (${m[1]} % of ${m[2]} %)`, reason: `the week's usage (${m[1]} %) reached the weekly stop (${m[2]} %)`, setting: 'weekly_stop_pct',
-    clears: reset ? `by itself at the weekly reset (${hhmm(reset)})` : 'by itself at the weekly reset', fix: 'wait for the reset, or raise the weekly stop (Settings)' };
-  if ((m = t.match(/^usage: api spend \$([\d.]+) in 24 h >= cap \$([\d.]+)$/))) return { short: `held: API spend $${m[1]} in 24 h reached the $${m[2]} daily cap`, reason: `API spend ($${m[1]} in the last 24 h) reached the $${m[2]} daily cap`, setting: 'api_usd_per_day',
-    clears: 'by itself as the last 24 h of spend falls under the cap', fix: 'wait, or raise or clear the API daily cap (Settings)' };
-  if ((m = t.match(/^PAUSED (\w+) \((.+)\)$/))) return { short: 'held: paused', reason: `Norn is paused (${PAUSE_MODES[m[1]]?.label ?? m[1]}): the file ${m[2]} holds every start`, clears: null, file: m[2], resume: true,
-    fix: `resume all (the header's pause menu, or norn resume --all) - it deletes the project's own PAUSED file; a machine-level ${m[2]} is deleted by hand` };
-  if ((m = t.match(new RegExp(`^dwarf: (.+) is busy on (${NID('RUN')})$`)))) return { short: `waits for ${m[1]}, its pinned dwarf (busy on ${name(m[2])})`, reason: `the lane is pinned to ${m[1]}, who is busy on ${m[2]}`, clears: `by itself when ${m[2]} ends`,   // a pinned dwarf works its lane only, one run at a time
-    fix: 'wait, or unpin the dwarf: norn crew unpin <id>', command: 'norn crew unpin <id>' };
-  if (t.startsWith('crew store ')) return { short: 'held: the crew store is unreadable', reason: t, clears: null, fix: 'repair or move the crew store file: no worker run starts without a dwarf' };
-  return { short: t, reason: t, clears: null, fix: 'see norn plan (the Waiting lanes on the dashboard)' };
-}
-
 const minsOf = (rec, now) => Math.max(0, Math.floor((now - Date.parse(rec.since)) / 60000));
 const what = rec => `${rec.runs.length} queued ${rec.scope === 'claude' ? 'Claude ' : ''}run${rec.runs.length === 1 ? '' : 's'}${rec.merges ? ` (${rec.merges} merge${rec.merges === 1 ? '' : 's'})` : ''}`;
 
@@ -94,9 +64,10 @@ export function holdItem(rec, { now = Date.now(), min = NOTICE_MIN, status = '',
   if (!rec?.term || !rec.since || !rec.runs?.length) return null;
   const minutes = minsOf(rec, now);
   if (minutes < min) return null;
-  const w = holdReason(rec.term, { billing: rec.billing, status });
+  // the card's words (waitwords.mjs): short = the Lanes sentence, reason = the title's; command / file / resume only where the fix has one
+  const { code: _c, text: short, ...w } = waitWords(rec.term, { billing: rec.billing, status });
   return { type: 'hold', id: 'hold', project, term: rec.term, scope: rec.scope, runs: rec.runs, merges: rec.merges ?? 0, since: rec.since, minutes, created: rec.since,
-    title: `All ${what(rec)} held since ${hhmm(rec.since)}: ${w.reason}`, ...w };
+    title: `All ${what(rec)} held since ${hhmm(rec.since)}: ${w.reason}`, short, ...w };
 }
 
 /** the owner notice of the episode, ONCE (hold.json notified): null before min minutes or when sent; the caller sends it (norn tick) */

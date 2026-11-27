@@ -11,7 +11,7 @@ import { crewState, pickDwarf, dwarfDisplay, dwarfOf, withCrew, lanePins, kindWo
   GIVEN_HEAD, GIVEN_TAIL, CLAN_HEAD, CLAN_TAIL } from '../engine/lib/crew.mjs';
 import { startRun, stopRun, queueOf, readiness, takesDwarf, RunRefused } from '../engine/lib/runs.mjs';
 import { loadState, record, crewFile, copyItems } from '../engine/lib/records.mjs';
-import { holdWords } from '../engine/lib/plan.mjs';
+import { waitWords } from '../engine/lib/waitwords.mjs';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
 import { runEnded } from './helpers/wait.mjs';
 
@@ -145,8 +145,8 @@ test('the pin is hard: the pinned dwarf takes its lane\'s run, waits when busy, 
   assert.deepEqual(pickDwarf(st, { project: 'p', lane: 'a' }, {}), { dwarf: 'dun' });
   assert.deepEqual(pickDwarf(st, { project: 'p', lane: 'a' }, { dun: 'RUN-7' }), { wait: 'dwarf: Dun Testbeard is busy on RUN-7' });
   assert.deepEqual(pickDwarf(st, { project: 'p', lane: 'b' }, { brak: 'RUN-8' }), { hire: true }, 'a pinned dwarf is never free for another lane');
-  assert.equal(holdWords('dwarf: Dun Testbeard is busy on RUN-7', { runs: [] }), 'waits for Dun Testbeard, its pinned dwarf (busy on RUN-7)');
-  assert.equal(holdWords('dwarf: Dun Testbeard is busy on RUN-b-7', { runs: [] }), 'waits for Dun Testbeard, its pinned dwarf (busy on RUN-b-7)', 'the id of a home run too');
+  assert.equal(waitWords('dwarf: Dun Testbeard is busy on RUN-7').text, 'waits for Dun Testbeard, its pinned dwarf (busy on RUN-7)');
+  assert.equal(waitWords('dwarf: Dun Testbeard is busy on RUN-b-7').text, 'waits for Dun Testbeard, its pinned dwarf (busy on RUN-b-7)', 'the id of a home run too');
 });
 
 test('no pin: the dwarf who last worked the lane, then the most runs in the project, then the longest idle', () => {

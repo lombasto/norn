@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { queueRun, readiness } from '../engine/lib/runs.mjs';
-import { wholeHold, trackHold, readHold, holdItem, holdNoticeDue, holdReason, noticeMin, NOTICE_MIN } from '../engine/lib/holds.mjs';
+import { wholeHold, trackHold, readHold, holdItem, holdNoticeDue, noticeMin, NOTICE_MIN } from '../engine/lib/holds.mjs';
+import { waitWords } from '../engine/lib/waitwords.mjs';
 import { digest } from '../engine/lib/digest.mjs';
 import { renderDigest } from '../engine/lib/views.mjs';
 import { renderTab } from '../engine/dash/ui.mjs';
@@ -29,19 +30,19 @@ test('wholeHold: every queued (Claude) run on the same machine-level term, else 
   assert.equal(wholeHold([row('RUN-1', ['PAUSED all (C:/s/PAUSED)', W]), row('RUN-2', ['PAUSED all (C:/s/PAUSED)'], { account: false })]).term, 'PAUSED all (C:/s/PAUSED)');
 });
 
-test('holdReason: a pinned dwarf busy on a home run (RUN-b-7) gets its reason, not the raw term', () => {
-  assert.equal(holdReason('dwarf: Dun Testbeard is busy on RUN-b-7').reason, 'the lane is pinned to Dun Testbeard, who is busy on RUN-b-7');
-  assert.equal(holdReason('dwarf: Dun Testbeard is busy on RUN-b-7', { name: () => 'Adopt A1' }).short, 'waits for Dun Testbeard, its pinned dwarf (busy on Adopt A1)', 'the short form (plan holdWords) names the run');
+test('waitWords: a pinned dwarf busy on a home run (RUN-b-7) gets its reason, not the raw term', () => {
+  assert.equal(waitWords('dwarf: Dun Testbeard is busy on RUN-b-7').reason, 'the lane is pinned to Dun Testbeard, who is busy on RUN-b-7');
+  assert.equal(waitWords('dwarf: Dun Testbeard is busy on RUN-b-7', { label: () => 'Adopt A1' }).text, 'waits for Dun Testbeard, its pinned dwarf (busy on Adopt A1)', 'the short form (the Plan) names the run');
 });
-test('holdReason: the reason and the exact fix, in the billing mode in force', () => {
-  assert.match(holdReason(W).fix, /set Billing \(Settings\): on API billing choose api.*norn calib --pct N/);
-  assert.equal(holdReason(W).setting, 'billing');
-  const plan = holdReason(W, { billing: 'max-5x' });
+test('waitWords: the reason and the exact fix, in the billing mode in force', () => {
+  assert.match(waitWords(W).fix, /set Billing \(Settings\): on API billing choose api.*norn calib --pct N/);
+  assert.equal(waitWords(W).setting, 'billing');
+  const plan = waitWords(W, { billing: 'max-5x' });
   assert.match(plan.fix, /^run norn calib --pct N/); assert.match(plan.reason, /billing: /);
-  assert.match(holdReason('usage: RATE_OK=0').clears, /trailing 2 h rate/);
-  assert.match(holdReason('usage: weekly 96.0 % >= guard 95 %', { status: '- reset 2026-11-20T08:00Z\n' }).clears, /weekly reset \(2026-11-20 08:00Z\)/);
-  assert.match(holdReason('usage: api spend $12.00 in 24 h >= cap $10.00').reason, /\$10.00 daily cap/);
-  const p = holdReason('PAUSED all (C:/s/PAUSED)');
+  assert.match(waitWords('usage: RATE_OK=0').clears, /trailing 2 h rate/);
+  assert.match(waitWords('usage: weekly 96.0 % >= guard 95 %', { status: '- reset 2026-11-20T08:00Z\n' }).clears, /weekly reset \(2026-11-20 08:00Z\)/);
+  assert.match(waitWords('usage: api spend $12.00 in 24 h >= cap $10.00').reason, /\$10.00 daily cap/);
+  const p = waitWords('PAUSED all (C:/s/PAUSED)');
   assert.equal(p.file, 'C:/s/PAUSED'); assert.equal(p.resume, true); assert.match(p.fix, /norn resume --all/); assert.match(p.reason, /Pause everything/);
   assert.equal(noticeMin({}), NOTICE_MIN); assert.equal(noticeMin({ holds: { notice_min: 15 } }), 15);
 });
@@ -125,7 +126,7 @@ test('tick: a PAUSED tick still tracks the hold, and returns ONE hold notice pas
   assert.match(r2.hold_notice.title, /all queued work held .*Norn is paused/);
   assert.equal(go().hold_notice, undefined, 'once per episode');
   fs.unlinkSync(pausedF);
-  assert.equal(holdReason(readHold(state).term).resume, true);
+  assert.equal(waitWords(readHold(state).term).resume, true);
 });
 
 // HOME-MAIL S3 (REPORT 3.3): the tick tells the sender once per mail another home has not acked past policy.mail.unacked_alert_min
