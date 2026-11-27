@@ -114,11 +114,12 @@ function order(me, o, items) {
     if (i > 0 && j >= 0 && j < i) out.push({ grade: 'planned', after: condOf(o), why: `${id} plans stage ${me.stage} after ${o.stage}; lane ${o.lane}'s ${o.stage} has not merged (${held(o)})` });
   }
   const n = me.names || {}, named = [o.run && n.runs?.includes(o.run) && o.run, o.dlv && n.dlvs?.includes(o.dlv) && o.dlv, n.lanes?.includes(o.lane) && `lane ${o.lane}`].filter(Boolean);
-  // DEC-a-683: a declared name says so; a guessed one (a search of the text) names the way out for a brief that only cites the work
-  if (named.length && !out.length) out.push({ grade: 'named', after: condOf(o), why: n.declared ? `the brief builds on ${named.join(', ')} (its Builds on: line): ${held(o)}`
-    : `the brief names ${named.join(', ')} (${held(o)}); if the brief only cites it, add the line "Builds on: none"` });
+  if (named.length && !out.length) out.push({ grade: 'named', after: condOf(o), why: namedWhy(n, named, o) });
   return out;
 }
+/** the why of a named order: DEC-a-683, a declared name says so; a guessed one (a search of the text) names the way out for a brief that only cites the work */
+const namedWhy = (n, named, o) => n.declared ? `the brief builds on ${named.join(', ')} (its Builds on: line): ${held(o)}`
+  : `the brief names ${named.join(', ')} (${held(o)}); if the brief only cites it, add the line "Builds on: none"`;
 
 // ---------- the pair rulings (SPEC 4A.2): wait and allow, the only records the judge reads ----------
 /** the key of an unordered lane pair */
