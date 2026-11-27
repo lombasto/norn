@@ -88,6 +88,15 @@ test('function ratchet pairing: an anonymous or same-named function pairs with i
   assert.deepEqual(fnr(ratchets({ file: 'a.mjs', base: at(meth(cls('A', 22, 4) + cls('B', 25, 5))), head: at(meth(cls('B', 25, 5))) })), [], 'two methods run, the first removed: the other is not reported');
 });
 
+test('function ratchet pairing: two unnamed functions on one line pair with themselves by their numbers when one is added above', () => {
+  const fn = (n, line, complexity) => ({ name: '(anonymous)', key: `(anonymous)#${n}`, line, end: line, complexity, lines: 1, depth: 0, params: 1, statements: 1, extract: null });
+  const fnr = r => r.filter(x => x.ratchet === 'function').map(x => [x.name, x.line, x.metrics]);
+  const row = 'xs.filter(a => (a.p ? a.q : a.r)).map(b => b.id);', base = { text: `${row}\n`, fns: [fn(1, 1, 25), fn(2, 1, 2)] };
+  const head = c => ({ text: `ys.forEach(z => z());\n${row}\n`, fns: [fn(1, 1, 1), fn(2, 2, c), fn(3, 2, 2)] });
+  assert.deepEqual(fnr(ratchets({ file: 'a.mjs', base, head: head(25) })), [], 'unchanged, one added above: the neighbour on the same line is not its partner');
+  assert.deepEqual(fnr(ratchets({ file: 'a.mjs', base, head: head(27) })), [['(anonymous)', 2, { complexity: [25, 27] }]], 'a real growth keeps its own base number');
+});
+
 test('file ratchet: a file over 1,500 lines that grew by more than 20 net lines; 20 lines is no finding', () => {
   const big = lines(1501);
   assert.deepEqual(ratchets({ file: 'b.mjs', base: { text: big, fns: [] }, head: { text: big + lines(21, 'y'), fns: [] } }).map(x => [x.ratchet, x.metrics]), [['file', { lines: [1501, 1522] }]]);
