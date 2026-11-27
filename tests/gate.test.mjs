@@ -90,6 +90,23 @@ test('gate: owner / dashboard records, open questions, parks, overrules each wak
   assert.match(gateAt(s.state, 11).why, /dec:DEC-1:overruled/);
 });
 
+test('gate: a lane the tick archives by rule is no news unless the archive names work at risk (DEC-a-680); other archivers wake', () => {
+  const laneSeen = () => { const s = base(); record(s.state, { kind: 'lane', ev: 'create', by: 'checkin', data: { name: 'a' } }, { now: at(1), run: s.c.id }); return s; };
+  const archive = (s, by, extra = {}) => record(s.state, { kind: 'lane', ev: 'archive', id: 'L:a', by, data: { why: 'merged 7 d ago - by the tick', rule: 'merged', worktree: 'removed', ...extra } }, { now: at(10), run: null });
+  let s = laneSeen(); archive(s, 'tick');
+  assert.equal(gateAt(s.state, 11).run, false, gateAt(s.state, 11).why);
+  s = laneSeen(); archive(s, 'tick', { worktree: 'kept', at_risk: 'C:/wt/a: commits not on main' });
+  let g = gateAt(s.state, 11);
+  assert.equal(g.run, true); assert.deepEqual(g.changes, ['-lane:L:a:active']); assert.equal(g.cls, 'major');
+  s = laneSeen(); archive(s, 'checkin');
+  g = gateAt(s.state, 11);
+  assert.equal(g.run, true); assert.deepEqual(g.changes, ['-lane:L:a:active']);
+  s = laneSeen(); archive(s, 'tick');
+  record(s.state, { kind: 'question', ev: 'create', by: 'controller', data: { lane: 'a', title: 't', body: 'b' } }, { now: at(10), run: null });
+  g = gateAt(s.state, 11);
+  assert.equal(g.run, true); assert.deepEqual(g.changes, ['+q:Q-1:open']);
+});
+
 test('gate: a live run past its wall budget (x wall_time_multiplier) is a stall and wakes once', () => {
   const s = base();
   const w = worker(s.state, -5, { budget_min: 20 });
