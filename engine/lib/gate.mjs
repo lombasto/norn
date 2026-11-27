@@ -151,13 +151,22 @@ function compare(E, base, startMs, nowMs, { caps, baseCaps, mult, live, baseLive
   for (const x of liveFacts(live, baseLive, pausedFlip)) c.add(x);
   // META-CHECKIN-DIET R1: a run the tick's code closed as routine (a launcher review) is no news: its run leaving, its deliverable
   const rt = routineIds(E.run, startMs), dlvRun = fold(E.dlv || []).items;
-  const news = x => !(x.startsWith('-run:') && rt.has(x.slice(5))) && !(x.startsWith('+dlv:') && rt.has(dlvRun[x.split(':')[1]]?.data?.run));
+  // DEC-a-680: so is a lane the tick archived by rule (lifecycle.mjs tickLanes) unless the archive names work at risk (kept worktree)
+  const ta = tickArchived(E.rec, startMs);
+  const news = x => !(x.startsWith('-run:') && rt.has(x.slice(5))) && !(x.startsWith('+dlv:') && rt.has(dlvRun[x.split(':')[1]]?.data?.run))
+    && !(x.startsWith('-lane:') && ta.has(x.slice(6, x.lastIndexOf(':'))));
   const changes = [...opening(diff(b, c)).filter(news), ...capRaises(baseCaps ?? caps, caps)];
   return changes.length ? { skip: false, changes, why: changed(changes) } : { skip: true, changes };
 }
 /** ids of runs a launcher ROUTINE review (checkins.mjs handleRoutineEnds) closed at or after sinceMs (ts has second resolution: a review in the start second of the check-in is still after it, never seen by it) */
 export const routineIds = (runEvs, sinceMs = -Infinity) => new Set(runEvs.filter(e => e.kind === 'run' && e.ev === 'review' && e.by === 'launcher' && e.data?.routine
   && Date.parse(e.ts) >= sinceMs).map(e => e.id));
+/** ids of lanes whose last archive at or after sinceMs is by the tick with no data.at_risk (a clean rule archive: no one has to act) */
+const tickArchived = (recEvs, sinceMs) => {
+  const last = new Map();
+  for (const e of recEvs) if (e.kind === 'lane' && e.ev === 'archive' && Date.parse(e.ts) >= sinceMs) last.set(e.id, e.by === 'tick' && !e.data?.at_risk);
+  return new Set([...last].filter(([, clean]) => clean).map(([id]) => id));
+};
 // GT-5 seam: a MINOR wake carries only facts a reduced-effort tick could handle (time, a start by another, a vanished run, the
 // guard band, the owner-event count); any other fact - or one a probe adds - is MAJOR. CHECKIN-V2 piece 2: a minor wake runs the
 // reduced tick (CHECKIN-MINOR.md on checkin_minor_model); its "MAJOR NEEDED" escalates the next tick to a full one.
