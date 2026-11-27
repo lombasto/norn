@@ -224,6 +224,14 @@ const mailNews = (o, g, now) => {
   return { mail, fresh: mail.filter(x => !had.has(x)).map(x => '+' + x) };
 };
 const changed = ch => `changed: ${ch.slice(0, 6).join(', ')}${ch.length > 6 ? ` (+${ch.length - 6} more)` : ''}`;
+// the quiet window for this tick: a forced baseline that did nothing doubles it (nextQuietN), anything else resets it
+const quietOf = (g, E, maxQ, capQ) => {
+  const qn = nextQuietN(g.quiet_n || 0, !!g.forced, g.forced ? actionsOf([...E.rec, ...E.run], g.run, endOf(E.run, g.run), bookkeepingIds(E.run)).length > 0 : false, maxQ, capQ);
+  return { qn, win: quietWindow(qn, maxQ, capQ) };
+};
+// the forced verdict: the baseline is older than the quiet window; mail the baseline was not launched with is named in why
+const forcedVerdict = (run, age, win, qn, fresh, mail) => ({ run: true, forced: true, quiet_n: qn, cls: wakeClass({ forced: true, changes: fresh }), mail,
+  why: `forced: last check-in ${run} ${Math.floor(age)} min ago (max quiet ${win})${fresh.length ? `; ${changed(fresh)}` : ''}` });
 
 /**
  * The gate verdict for one tick. o: { state, budget (machine: checkin_gate, checkin_max_quiet_min, max_*), policy (project:
@@ -242,10 +250,8 @@ export function checkinGate(o) {
   const capQ = Number(B.checkin_quiet_max_min ?? GATE_DEFAULTS.checkin_quiet_max_min);
   const esc = majorNeededOf(baseItem);
   if (esc) return { run: true, cls: wakeClass({ escalated: true }), why: `escalated by ${g.run}: ${esc.slice(0, 120)}`, mail };
-  const qn = nextQuietN(g.quiet_n || 0, !!g.forced, g.forced ? actionsOf([...E.rec, ...E.run], g.run, endOf(E.run, g.run), bookkeepingIds(E.run)).length > 0 : false, maxQ, capQ);
-  const win = quietWindow(qn, maxQ, capQ);
-  if (age > win) return { run: true, forced: true, quiet_n: qn, cls: wakeClass({ forced: true, changes: fresh }), mail,
-    why: `forced: last check-in ${g.run} ${Math.floor(age)} min ago (max quiet ${win})${fresh.length ? `; ${changed(fresh)}` : ''}` };
+  const { qn, win } = quietOf(g, E, maxQ, capQ);
+  if (age > win) return forcedVerdict(g.run, age, win, qn, fresh, mail);
   const fu = followUpOf(baseItem);
   if (fu) return { run: true, cls: wakeClass({ followUp: true }), why: `follow-up asked by ${g.run}: ${fu.slice(0, 120)}`, mail };
   const changes = [...compare(E, g.run, startMs, now, { caps: capsOf(B), baseCaps: g.caps, mult: Number(o.policy?.iteration?.wall_time_multiplier ?? 2),
