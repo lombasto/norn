@@ -60,16 +60,20 @@ export function functionsOf(xs, text = '') {
 const excessOf = fns => fns.reduce((s, f) => s + Object.keys(CAPS).reduce((t, m) => t + Math.max(0, f[m] - CAPS[m]), 0), 0);
 const codeLines = text => (text || '').split('\n').filter(l => /\S/.test(l)).length;
 // the base partner of each head function (head key -> base fn), within one name: a function whose body (its own lines, trimmed) is
-// unchanged pairs with itself wherever it moved; what is left pairs by the most body lines shared, then nearest in file order. Keying
+// unchanged pairs with itself wherever it moved; what is left pairs by the most body lines shared, then the nearest numbers (two unnamed
+// functions on one dense line share a body, and their ordinals shift when one is added above), then nearest in file order. Keying
 // by name#n alone paired the nth (anonymous) with whatever function now held that ordinal once one was added or removed above it.
 const bodyOf = (text, f) => text.split('\n').slice(f.line - 1, f.end).map(l => l.trim());
 function shared(a, b) { const n = new Map(); for (const l of b) n.set(l, (n.get(l) || 0) + 1); return a.filter(l => n.get(l) > 0 && n.set(l, n.get(l) - 1)).length; }
+const gap = (a, b) => ['complexity', 'statements', 'params', 'depth', 'lines'].reduce((s, m) => s + Math.abs((a[m] || 0) - (b[m] || 0)), 0);
+const side = (fns, text, name) => fns.filter(f => f.name === name).map((f, i) => { const body = bodyOf(text, f); return { f, i, body, joined: body.join('\n') }; });
+const byLikeness = (x, y) => y.same - x.same || y.shared - x.shared || x.gap - y.gap || x.far - y.far || x.h.i - y.h.i;
 function partners(bfns, btext, hfns, htext) {
-  const out = new Map(), side = (fns, text, name) => fns.filter(f => f.name === name).map((f, i) => ({ f, i, body: bodyOf(text, f) }));
+  const out = new Map();
   for (const name of new Set(hfns.map(f => f.name))) {
     const bs = side(bfns, btext, name), hs = side(hfns, htext, name), taken = new Set();
-    const pairs = hs.flatMap(h => bs.map(b => ({ h, b, same: +(h.body.join('\n') === b.body.join('\n')), shared: shared(h.body, b.body), far: Math.abs(h.i - b.i) })));
-    for (const p of pairs.sort((x, y) => y.same - x.same || y.shared - x.shared || x.far - y.far || x.h.i - y.h.i)) if (!out.has(p.h.f.key) && !taken.has(p.b)) { out.set(p.h.f.key, p.b.f); taken.add(p.b); }
+    const pairs = hs.flatMap(h => bs.map(b => ({ h, b, same: +(h.joined === b.joined), shared: shared(h.body, b.body), gap: gap(h.f, b.f), far: Math.abs(h.i - b.i) })));
+    for (const p of pairs.sort(byLikeness)) if (!out.has(p.h.f.key) && !taken.has(p.b)) { out.set(p.h.f.key, p.b.f); taken.add(p.b); }
   }
   return out;
 }
