@@ -126,12 +126,16 @@ export function scanRepo(repo, { main = 'main', remote = 'origin', cache = {}, g
     const pre = branch.slice(0, i + 1), rest = branch.slice(i + 1), hit = base => [...refs.keys()].find(k => { if (!k.startsWith(base + pre)) return false;
       const t = k.slice(base.length + pre.length), j = t.indexOf('/'); return j > 0 && /^[a-z][a-z0-9]{0,7}$/.test(t.slice(0, j)) && t.slice(j + 1) === rest; });
     const k = hit(`refs/remotes/${remote}/`) || hit('refs/heads/'); return k ? refs.get(k) : null; };
+  // DLV-b-107 (DEC-a-682): a lane restarted on its old branch name left the remote copy at an old commit already on main; read first,
+  // it latched the deliverable merged while its DONE work sat off main. With a tip recorded at DONE a branch ref is this deliverable's
+  // only when it holds that work (it IS the tip, or the tip is its ancestor: later commits); neither holds it: the DONE tip itself
+  const holding = (branch, doneTip) => [refs.get(`refs/remotes/${remote}/${branch}`), refs.get('refs/heads/' + branch)].find(r => r && (r.sha === doneTip || onBase(doneTip, r.sha))) || null;
   const info = (branch, fallbackTip = null) => {
-    const direct = refs.get(`refs/remotes/${remote}/${branch}`) || refs.get('refs/heads/' + branch) || null, ren = direct ? null : renamed(branch);
-    const ref = direct || (fallbackTip ? null : ren), tip = ref?.sha || fallbackTip || null;
+    const named = refs.get(`refs/remotes/${remote}/${branch}`) || refs.get('refs/heads/' + branch) || null, ren = named ? null : renamed(branch);
+    const ref = fallbackTip ? holding(branch, fallbackTip) : named || ren, tip = ref?.sha || fallbackTip || null;
     const merged = onBase(tip, mainSha) || hist.some(h => onBase(tip, h));
     const installedHit = inst.some(s => onBase(tip, s));
-    const r = { branch, tip, ref_date: ref?.date ?? null, subject: ref?.subject ?? null, exists: !!(direct || ren), merged, installed: installedHit, behind: null, ahead: null, native: null, native_files: [] };
+    const r = { branch, tip, ref_date: ref?.date ?? null, subject: ref?.subject ?? null, exists: !!(named || ren), merged, installed: installedHit, behind: null, ahead: null, native: null, native_files: [] };
     if (tip && mainSha && !merged && !gone.has(tip)) {   // a gone tip has no counts (git cannot count it); a failed count is not kept
       const k = `${tip}:${mainSha}`;
       if (!c.counts[k]) {
