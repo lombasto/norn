@@ -436,7 +436,7 @@ function where(flags, env) {
 }
 // NORN-WATCH S4: --after / --inputs parse errors are usage errors (exit 2)
 const afterOf = (s, parse = parseAfter) => { try { return parse(s); } catch (e) { if (e instanceof AfterError) throw new RunError(e.message); throw e; } };
-// OOTB-R2 N-2: a relative --brief / --notes is the caller's (cwd), not the lane worktree's the worker runs in ('-' = no brief file)
+// OOTB-R2 N-2 + DEC-a-683: a relative --brief / --notes / --worktree is the caller's (cwd), not the folder the worker or its supervisor runs in ('-' = no brief file)
 const callerPath = f => (f && f !== '-' ? path.resolve(f) : f);
 // META-MERGE-MARKER (DEC-275 / DEC-285 / DEC-287): a MERGE run's notes = the NOTES file its brief names (its meta-merge marker, written
 // by norn merge-brief --notes) - the worker writes its log there; a --notes naming another file is refused (one home)
@@ -471,7 +471,7 @@ function runSpec(flags, env, { project, state, locks }) {
   const late = s => (s ? expandLate(s, { lane: flags.lane }) : undefined);
   // META-QUEUE-SPEC R1: the policy-derived parts (memory, profile, model / effort / agent, class table) - the fill resolves them again
   const explicit = { model: flags.model, effort: flags.effort, agent: flags.agent, class: flags.class };
-  const claudeDir = machine?.claude?.config_dir || path.join(os.homedir(), '.claude'), wt = flags.worktree || late(project?.lane_defaults?.worktree);
+  const claudeDir = machine?.claude?.config_dir || path.join(os.homedir(), '.claude'), wt = callerPath(flags.worktree) || late(project?.lane_defaults?.worktree);
   const parts = launchParts({ project, budget, executor: ex, lane: flags.lane, explicit, claudeDir, worktree: wt }), prov = parts.provider;
   const harnessClaude = ex === 'claude' || (prov && executorInfo(ex, prov)?.harness === 'claude');
   const noAgent = harnessClaude ? agentRefusal(parts.agent, { claudeDir, worktree: wt, project }) : null;
@@ -482,7 +482,7 @@ function runSpec(flags, env, { project, state, locks }) {
   const o = {
     state, locksDir: locks, executor: ex, lane: flags.lane, brief: callerPath(flags.brief), project: project?.name,
     ...(project && subdirOf(project) ? { subdir: subdirOf(project) } : {}),   // a monorepo project: the scope guard keeps a run without Scope: inside it
-    worktree: flags.worktree || late(project?.lane_defaults?.worktree) || briefMergeWt(flags, callerPath(flags.brief)), notes: briefNotes(flags, callerPath(flags.brief)) || callerPath(flags.notes) || late(project?.lane_defaults?.notes),
+    worktree: wt || briefMergeWt(flags, callerPath(flags.brief)), notes: briefNotes(flags, callerPath(flags.brief)) || callerPath(flags.notes) || late(project?.lane_defaults?.notes),
     after: afterOf(flags.after), inputs: afterOf(flags.inputs, parseInputs), priority: flags.priority,
     caller: flags.as || env.META_ROLE,   // META-CONTROLLER C4: a check-in's run on a held lane is refused (runs.heldRefusal)
     part_of: flags['part-of'],   // lane-collide SPEC 4.4: this run is a declared part of that lane's item (no item collision with it)
