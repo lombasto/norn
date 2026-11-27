@@ -325,6 +325,7 @@ function paintMain(d) {
   const a = document.activeElement, keep = draftsKeep(), fxSel = ['[data-rmf="q"]', '[data-runs-lane]'].find(k => a?.matches?.(k)), fx = fxSel ? [a.selectionStart, a.selectionEnd] : null;
   const home = S.tab === 'controller' ? homeKeep() : null;
   const lcard = a?.closest?.('#main .lhov') ? a.closest('#main [id]')?.id : null;   // RM-39: a stream repaint keeps an open lane card (focus) open
+  const lchev = a?.matches?.('#main .lrow .lopen') ? a.closest('.lrow')?.id : null;   // a focused lane chevron (Esc gave it back) keeps the focus
   const whys = S.tab === 'lanes' ? [...document.querySelectorAll('#main details.lane-why[open]')].map(x => x.closest('[id^="lane-"]')?.id).filter(Boolean) : [];   // ... and a tapped-open objective
   const form = S.tab === 'adopt' ? adoptForm() : null, focus = a?.closest?.('#main .adp') && a.matches('input[type=text]') ? (a.dataset.answer ? `[data-answer="${a.dataset.answer}"]` : '[data-adopt="root"]') : null;
   const rs = S.tab === 'runs' ? ['#run-doc'].map(k => [k, $(k)?.dataset.run ?? '', $(k)?.scrollTop ?? 0]) : [], rrow = a?.matches?.('#main .rrow') ? a.id : null;   // the run drawer keeps its scroll (the same run's document only), a focused row its focus
@@ -333,6 +334,7 @@ function paintMain(d) {
   mountFeed(); for (const [k, run, top] of rs) { const el = $(k); if (el && (el.dataset.run ?? '') === run) el.scrollTop = top; } if (rrow) document.getElementById(rrow)?.focus({ preventScroll: true });   // the run document's live feed: its slot, else it stops
   if (home) homeRestore(home);
   if (lcard) document.getElementById(lcard)?.querySelector('.lhov > :first-child')?.focus();
+  if (lchev) document.getElementById(lchev)?.querySelector('.lopen')?.focus();
   for (const id of whys) { const w = document.getElementById(id)?.querySelector('details.lane-why'); if (w) w.open = true; }
   if (form) {
     for (const x of document.querySelectorAll('#main [data-answer], #main [data-adopt]')) { const k = x.dataset.answer ? 'a:' + x.dataset.answer : 'p:' + x.dataset.adopt; if (form[k] !== undefined && form[k] !== '') x.value = form[k]; }
