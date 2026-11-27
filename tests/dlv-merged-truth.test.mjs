@@ -210,3 +210,25 @@ test('a stale remote copy on main never reads a deliverable merged: the ref that
   g(repo, 'update-ref', 'refs/remotes/origin/feat/s', A); g(repo, 'branch', '-q', '-f', 'feat/s', B); g(repo, 'merge', '-q', '--ff-only', B);
   j = ask(); assert.equal(j.merge?.how, 'git'); assert.equal(j.g.tip, B);
 });
+
+// DLV-b-107 (DEC-a-682): a reused branch name whose remote copy is old work that landed by squash. The copy diverged from the DONE tip
+// (not an ancestor of it) and was committed BEFORE the DONE: a stale copy, never this deliverable's tip (its patches are on main).
+// A diverged ref committed after the DONE is a rewrite of the work (the hand-landing test above) and counts.
+test('a diverged remote copy older than the DONE never reads a deliverable merged: its tip is the DONE tip', () => {
+  const repo = tmp('repo');
+  g(repo, 'init', '-q', '-b', 'main'); g(repo, 'config', 'commit.gpgsign', 'false');
+  write(repo, 'app.js', ['a']); const A = commitAll(repo, 'A');
+  g(repo, 'checkout', '-q', '-b', 'feat/o'); write(repo, 'app.js', ['a', 'old']);
+  const old = at(-48).toISOString(), oenv = { ...GENV, GIT_AUTHOR_DATE: old, GIT_COMMITTER_DATE: old };
+  execFileSync('git', ['-C', repo, 'commit', '-q', '-am', 'X: the old round'], { env: oenv, stdio: 'ignore' }); const X = g(repo, 'rev-parse', 'HEAD');
+  g(repo, 'update-ref', 'refs/remotes/origin/feat/o', X); g(repo, 'checkout', '-q', 'main'); g(repo, 'branch', '-q', '-D', 'feat/o');
+  g(repo, 'merge', '-q', '--squash', X); commitAll(repo, 'X squashed');
+  g(repo, 'checkout', '-q', '-b', 'new-round'); write(repo, 'app.js', ['a', 'old', 'new']); const B = commitAll(repo, 'B: the new round'); g(repo, 'checkout', '-q', 'main');
+  assert.equal(g(repo, 'merge-base', X, B), A, 'X diverged from the DONE tip');
+  const state = tmp('state'), id = mkDlv(state, { repo, branch: 'feat/o', tip: B, delivers: 'o', done_utc: at(-10).toISOString() });
+  record(state, { kind: 'deliverable', ev: 'done', id, by: 'launcher', data: { tip: B } }, { now: () => at(-9), views: false });
+  const cfg = { repo, main: 'main', remote: 'origin', native: null, history: [] }, git = makeGit();
+  const j = judge(loadDeliverables(state)[id], repoScanner({ cfg, cache: {}, git, install: null }).get(repo), { cfg, git });
+  assert.equal(j.merge, null, 'the old squashed round on origin/feat/o is not this work');
+  assert.deepEqual([j.g.tip, j.g.ahead, j.g.exists], [B, 1, true]);
+});
