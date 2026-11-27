@@ -87,7 +87,7 @@ test('debounce: a wake of ends only waits for the oldest new end + the window; a
   assert.deepEqual(debounceOf(gate, { runEvs, minutes: 5, now: now(13) }), { until: '2026-11-08T10:15:00.000Z', ends: 2 });
   assert.equal(debounceOf(gate, { runEvs, minutes: 5, now: now(15) }), null, 'the window is over: check in');
   assert.equal(debounceOf(gate, { runEvs, minutes: 0, now: now(13) }), null, 'debounce_min 0 = every end at once');
-  for (const x of ['+q:Q-1:open', '+owner:4', '+stall:RUN-9', '+mail:MAIL-1']) assert.equal(debounceOf({ ...gate, changes: [...gate.changes, x] }, { runEvs, minutes: 5, now: now(13) }), null, x);
+  for (const x of ['+q:Q-1:open', '+owner:4', '+stall:RUN-9', '+mail:MAIL-1', '+cmail:MAIL-1']) assert.equal(debounceOf({ ...gate, changes: [...gate.changes, x] }, { runEvs, minutes: 5, now: now(13) }), null, x);
   assert.equal(debounceOf({ ...gate, forced: true }, { runEvs, minutes: 5, now: now(13) }), null, 'forced');
 });
 

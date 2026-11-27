@@ -14,6 +14,7 @@ import { binOf } from '../engine/lib/rustbin.mjs';
 import { fwd } from '../engine/lib/config.mjs';
 import { waitMail, MAIL_WAIT_POLL_S } from '../engine/lib/mail.mjs';
 import { waitFetch, mailWait } from '../engine/lib/mailwait.mjs';
+import { checkinGate, noteCheckin, mailFacts } from '../engine/lib/gate.mjs';
 
 const META = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'bin', 'norn.mjs');
 
@@ -419,17 +420,18 @@ test('norn run hands the nudge its inputs: policy mail.nudge_after_min (default 
 });
 
 // ---------- piece 4: the gate fact mail:MAIL-n (a reply addressed to the check-in) = a MAJOR wake ----------
-test('gate fact mail:MAIL-n: mail to role:checkin wakes the check-in (MAJOR) once; mail to a run and any ack are not news', async () => {
-  const { checkinGate, noteCheckin, facts } = await import('../engine/lib/gate.mjs');
+test('gate fact mail:MAIL-n: mail to role:checkin wakes the check-in (MAJOR) once; mail to a run and any ack are not news', () => {
   const T0 = Date.parse('2026-11-08T10:00:00Z'), at = min => () => new Date(T0 + min * 60000);
   const s = tmp();
   const R = (e, min, run = null) => record(s, e, { now: at(min), run });
+  const gate = min => checkinGate({ state: s, budget: {}, live: {}, now: at(min)() });
+  // a check-in is launched with the open mail of the verdict it ran on (the tick stores gate.mail)
   const checkin = (min, end) => {
+    const mail = gate(min).mail;
     const id = R({ kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'checkin', executor: 'fake', lane: 'checkin' } }, min).id;
-    noteCheckin(s, { run: id, start: at(min)().toISOString(), live: {}, budget: {} });
+    noteCheckin(s, { run: id, start: at(min)().toISOString(), live: {}, budget: {}, mail });
     return { id, end: () => R({ kind: 'run', ev: 'end', id, by: 'launcher', data: { outcome: 'done', exit: 0 } }, end) };
   };
-  const gate = min => checkinGate({ state: s, budget: {}, live: {}, now: at(min)() });
   const c1 = checkin(0, 5);
   const w = R({ kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'a' } }, 2, c1.id).id;   // its own dispatch
   c1.end();
@@ -438,11 +440,12 @@ test('gate fact mail:MAIL-n: mail to role:checkin wakes the check-in (MAJOR) onc
   assert.equal(gate(22).run, false, "mail to a run is not the check-in's news");
   R({ kind: 'mail', ev: 'create', by: 'worker', data: { from: w, to: 'role:checkin', subject: 'reply', body: 'step 2 done' } }, 30, w);
   const g = gate(31);
-  assert.equal(g.run, true); assert.match(g.why, /mail:MAIL-2/); assert.equal(g.cls, 'major');
-  assert.ok(facts([], [], { at: T0, mailEvs: readEvents(recordsFile(s, 'mail')) }).has('mail:MAIL-2'));
-  // the next check-in saw it and acks it: no self-wake
+  assert.equal(g.run, true); assert.match(g.why, /\+mail:MAIL-2/); assert.equal(g.cls, 'major'); assert.deepEqual(g.mail, ['mail:MAIL-2']);
+  assert.deepEqual(mailFacts(s, { now: at(31)().getTime() }), ['mail:MAIL-2']);
+  // the next check-in is launched with it: no wake again while it stays open; it acks it: no self-wake
   const c2 = checkin(40, 45);
-  R({ kind: 'mail', ev: 'ack', id: 'MAIL-2', by: 'checkin', data: {} }, 41, c2.id);
+  assert.equal(gate(41).run, false, gate(41).why);
+  R({ kind: 'mail', ev: 'ack', id: 'MAIL-2', by: 'checkin', data: {} }, 42, c2.id);
   c2.end();
   assert.equal(gate(50).run, false, gate(50).why);
   // a reply the check-in saw, acked later by the controller: the fact going away is not news
@@ -451,6 +454,58 @@ test('gate fact mail:MAIL-n: mail to role:checkin wakes the check-in (MAJOR) onc
   const c3 = checkin(55, 56); c3.end();
   R({ kind: 'mail', ev: 'ack', id: 'MAIL-3', by: 'controller', data: {} }, 60);
   assert.equal(gate(61).run, false, gate(61).why);
+});
+
+// archive-wake S2 (DEC-a-682 item 1): mail another home sent lies only in this home's copy homes/<h>/mail.jsonl; it wakes the
+// check-in MAJOR once - mail to role:checkin@<home> at once, mail to role:controller@<home> once it is policy.mail.checkin_take_min old
+const twoHomes = () => {
+  const t = tmp(), dir = id => { const s = path.join(t, id); fs.mkdirSync(s, { recursive: true }); fs.writeFileSync(path.join(s, 'home.json'), JSON.stringify({ id, bare_home: 'a' })); return s; };
+  const a = dir('a'), b = dir('b'), G0 = Date.parse('2026-11-27T10:00:00Z'), at = min => () => new Date(G0 + min * 60000);
+  const sync = () => { fs.mkdirSync(path.join(b, 'homes', 'a'), { recursive: true }); fs.copyFileSync(path.join(a, 'mail.jsonl'), path.join(b, 'homes', 'a', 'mail.jsonl')); };
+  const fromA = (to, min) => { const id = record(a, { kind: 'mail', ev: 'create', by: 'controller', data: { from: 'role:controller@a', to, subject: 's', body: 'x' } }, { now: at(min) }).id; sync(); return id; };
+  const ack = (id, min) => record(b, { kind: 'mail', ev: 'ack', id, by: 'controller', data: {} }, { now: at(min) });
+  const checkin = (min, mail) => {   // a check-in of home b, launched at min with the open mail list `mail`, ended a minute later
+    const id = record(b, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'checkin', executor: 'fake', lane: 'checkin' } }, { now: at(min) }).id;
+    noteCheckin(b, { run: id, start: at(min)().toISOString(), live: {}, budget: {}, mail });
+    record(b, { kind: 'run', ev: 'end', id, by: 'launcher', data: { outcome: 'done', exit: 0 } }, { now: at(min + 1) });
+  };
+  return { b, at, fromA, ack, checkin };
+};
+test("mail from another home (only in its copy) wakes this home's check-in MAJOR once: check-in mail at once, controller mail after checkin_take_min; an ack is no news", () => {
+  const { b, at, fromA, ack, checkin } = twoHomes();
+  const gate = (min, o = {}) => checkinGate({ state: b, budget: { checkin_max_quiet_min: 600 }, live: {}, now: at(min)(), ...o });
+  const m1 = fromA('role:checkin@b', -10);
+  assert.equal(m1, 'MAIL-a-1');
+  assert.equal(fs.existsSync(path.join(b, 'mail.jsonl')), false, 'only in the copy');
+  checkin(0, []);   // created before its start, but not in the mail it was launched with
+  let g = gate(5);
+  assert.equal(g.run, true, g.why); assert.equal(g.cls, 'major'); assert.match(g.why, /\+mail:MAIL-a-1/); assert.deepEqual(g.mail, ['mail:MAIL-a-1']);
+  checkin(10, g.mail);
+  assert.equal(gate(15).run, false, gate(15).why);
+  ack(m1, 16);
+  assert.equal(gate(17).run, false, gate(17).why);
+  const m2 = fromA('role:controller@b', 20);
+  assert.equal(gate(34).run, false, `14 min: ${gate(34).why}`);
+  assert.equal(gate(34, { policy: { mail: { checkin_take_min: 10 } } }).run, true, 'policy.mail.checkin_take_min');
+  g = gate(35);
+  assert.equal(g.run, true, g.why); assert.equal(g.cls, 'major'); assert.match(g.why, /\+cmail:MAIL-a-2/); assert.deepEqual(g.mail, [`cmail:${m2}`]);
+  checkin(35, g.mail);
+  assert.equal(gate(40).run, false, gate(40).why);
+  ack(m2, 41);
+  assert.equal(gate(42).run, false, gate(42).why);
+  // acked before any tick saw it: never a wake
+  ack(fromA('role:checkin@b', 43), 44);
+  assert.equal(gate(45).run, false, gate(45).why);
+});
+test('a forced check-in with fresh mail is MAJOR (a minor tick does not take mail); without, minor as before', () => {
+  const { b, at, fromA, checkin } = twoHomes();
+  checkin(0);
+  const gate = min => checkinGate({ state: b, budget: { checkin_max_quiet_min: 30 }, live: {}, now: at(min)() });
+  let g = gate(31);
+  assert.equal(g.forced, true); assert.equal(g.cls, 'minor'); assert.deepEqual(g.mail, []);
+  fromA('role:checkin@b', 32);
+  g = gate(33);
+  assert.equal(g.forced, true); assert.equal(g.cls, 'major'); assert.match(g.why, /\+mail:MAIL-a-1/); assert.deepEqual(g.mail, ['mail:MAIL-a-1']);
 });
 
 // ---------- NORN-MAIL-WAIT: norn mail wait (the controller session's blocking read; clock, sleep and fetch injected) + ack of several ids ----------
