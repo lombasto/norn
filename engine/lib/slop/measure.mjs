@@ -33,8 +33,9 @@ function blockSpan(code, line, column, end) {
   return [line, end];
 }
 /**
- * One file's ESLint messages of the measure run (parseEslint's shape) -> [{ name, key (name#n: the nth of that name, stable across
- * moves), line, end, complexity, lines, depth, params, statements, extract: [a, b] (the largest nested block: the extraction candidate) }]
+ * One file's ESLint messages of the measure run (parseEslint's shape) -> [{ name, key (name#n: the nth of that name, an id within this
+ * side only: the ratchet pairs base and head by `partners`, not by key), line, end, complexity, lines, depth, params, statements,
+ * extract: [a, b] (the largest nested block: the extraction candidate) }]
  */
 export function functionsOf(xs, text = '') {
   const by = new Map(), depth = [];
@@ -58,11 +59,25 @@ export function functionsOf(xs, text = '') {
 // ---------- the ratchets (SPEC 4.1 b, c and the anti-gaming row) ----------
 const excessOf = fns => fns.reduce((s, f) => s + Object.keys(CAPS).reduce((t, m) => t + Math.max(0, f[m] - CAPS[m]), 0), 0);
 const codeLines = text => (text || '').split('\n').filter(l => /\S/.test(l)).length;
-// a function new at head whose name is used once more in the file, inside another function, counts with that caller (main -> main2)
-function folded(fns, text, baseKeys) {
+// the base partner of each head function (head key -> base fn), within one name: a function whose body (its own lines, trimmed) is
+// unchanged pairs with itself wherever it moved; what is left pairs by the most body lines shared, then nearest in file order. Keying
+// by name#n alone paired the nth (anonymous) with whatever function now held that ordinal once one was added or removed above it.
+const bodyOf = (text, f) => text.split('\n').slice(f.line - 1, f.end).map(l => l.trim());
+function shared(a, b) { const n = new Map(); for (const l of b) n.set(l, (n.get(l) || 0) + 1); return a.filter(l => n.get(l) > 0 && n.set(l, n.get(l) - 1)).length; }
+function partners(bfns, btext, hfns, htext) {
+  const out = new Map(), side = (fns, text, name) => fns.filter(f => f.name === name).map((f, i) => ({ f, i, body: bodyOf(text, f) }));
+  for (const name of new Set(hfns.map(f => f.name))) {
+    const bs = side(bfns, btext, name), hs = side(hfns, htext, name), taken = new Set();
+    const pairs = hs.flatMap(h => bs.map(b => ({ h, b, same: +(h.body.join('\n') === b.body.join('\n')), shared: shared(h.body, b.body), far: Math.abs(h.i - b.i) })));
+    for (const p of pairs.sort((x, y) => y.same - x.same || y.shared - x.shared || x.far - y.far || x.h.i - y.h.i)) if (!out.has(p.h.f.key) && !taken.has(p.b)) { out.set(p.h.f.key, p.b.f); taken.add(p.b); }
+  }
+  return out;
+}
+// a function new at head (no base partner) whose name is used once more in the file, inside another function, counts with that caller (main -> main2)
+function folded(fns, text, paired) {
   const code = maskClasses(text, ['code'], classify(text)), out = fns.map(f => ({ ...f })), gone = new Set();
   for (const f of out) {
-    if (baseKeys.has(f.key) || f.name === '(anonymous)' || usesOf(code, f.name) !== 2) continue;
+    if (paired.has(f.key) || f.name === '(anonymous)' || usesOf(code, f.name) !== 2) continue;
     const re = new RegExp(`(?<![\\w$])${f.name.replace(/\$/g, '\\$')}(?![\\w$])`, 'g'), lines = [...code.matchAll(re)].map(m => code.slice(0, m.index).split('\n').length).filter(l => l < f.line || l > f.end);
     const caller = lines.length === 1 && out.filter(g => g !== f && !gone.has(g) && g.line <= lines[0] && lines[0] <= g.end).sort((a, b) => (a.end - a.line) - (b.end - b.line))[0];
     if (!caller) continue;
@@ -78,7 +93,7 @@ const metricWords = ms => Object.entries(ms).map(([m, [b, h]]) => `${m} ${b ?? '
  * file whose summed excess over the caps grew (so splitting nothing off and shuffling cannot hide it).
  */
 export function ratchets({ file, base, head }) {
-  const out = [], bfns = base?.fns || [], bk = new Map(bfns.map(f => [f.key, f])), hfns = folded(head.fns || [], head.text || '', new Set(bk.keys()));
+  const out = [], bfns = base?.fns || [], bk = partners(bfns, base?.text || '', head.fns || [], head.text || ''), hfns = folded(head.fns || [], head.text || '', bk);
   for (const f of hfns) {
     const b = bk.get(f.key), ms = {};
     for (const m of Object.keys(CAPS)) if (f[m] > CAPS[m] && (!b || b[m] <= CAPS[m] || f[m] > b[m])) ms[m] = [b ? b[m] : null, f[m]];
