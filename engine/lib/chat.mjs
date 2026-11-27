@@ -195,7 +195,7 @@ const killTree = child => {
 };
 
 // ---------- META-CONTROLLER C5 (SPEC sec. 4): the hand-off, so the conversation never dies of a full context ----------
-export const CONTEXT_DEFAULT = { ...POLICY_DEFAULTS.context.controller };   // 90 / 110 / 150k: no new step / hand-off / hard max
+export const CONTEXT_DEFAULT = { ...POLICY_DEFAULTS.context.controller };   // the controller row of POLICY_DEFAULTS.context: no new step / hand-off / hard max, in k tokens (owner Q-b-35 set the defaults)
 const SETTLE_MS = 15000;   // quiet time after a turn's result before a still-owed message count is dropped (it was folded into that turn)
 const HANDOFF_MS = 10 * 60000;   // a hand-off turn that has not ended by then is cut: the forced hand-off takes over
 const TURNS_CARRIED = 10, TURN_CLIP = 2000;
