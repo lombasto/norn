@@ -138,6 +138,39 @@ test('a non-leader opens the PR of its DONE pushed lane branch through a fake gh
   assert.equal(readSync(g.b.state, 'prs')['norn/b/x'].url, 'https://github.com/o/r/pull/1');
 });
 
+// DLV-a-237 (DEC-a-681): ci-fix lanes are reused and a check-in may not unarchive, so a DONE run can end on an archived lane; its work
+// is newer than the archive and gets its PR. A lane archived after its last DONE run stays skipped: no git, no gh.
+test('followerPrs opens the PR of a DONE run on an archived lane; a lane archived after its DONE run is skipped with no gh call', () => {
+  const g = rig(), t = mkTmp('meta-leader-arch-'), rp = laneRepo(t), at = s => () => new Date(T0 + s * S);
+  const lane = (name, archiveAt, startAt, endAt) => {
+    const w = rp.lane(name, `${name}.txt`), id = record(g.b.state, { kind: 'lane', ev: 'create', by: 'controller', data: { name } }, { now: at(0), views: false }).id;
+    const archive = () => record(g.b.state, { kind: 'lane', ev: 'archive', id, by: 'tick', data: { why: 'test' } }, { now: at(archiveAt), views: false });
+    if (archiveAt < startAt) archive();
+    const r = record(g.b.state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'fake', lane: name, worktree: w.wt } }, { now: at(startAt) });
+    record(g.b.state, { kind: 'run', ev: 'end', id: r.id, by: 'launcher', data: { exit: 0, outcome: 'done', branch: w.branch, head: git(w.wt, 'rev-parse', 'HEAD') } }, { now: at(endAt) });
+    if (archiveAt > endAt) archive();
+    return r.id;
+  };
+  const p = { name: 'demo', file: path.join(t, 'project.json'), state: g.b.state, deliverables: { repo: rp.repo, main: 'main' } };
+  const calls = [], gh = args => { calls.push(args); return args[1] === 'list' ? { code: 0, out: '[]', err: '' } : { code: 0, out: 'https://github.com/o/r/pull/1\n', err: '' }; };
+  const late = lane('late', 10, 20, 30);
+  lane('old', 40, 1, 2);
+  const st = n => Object.values(loadState(g.b.state).items).find(i => i.kind === 'lane' && i.data?.name === n)?.state;
+  assert.deepEqual([st('late'), st('old')], ['archived', 'archived']);
+  const rs = followerPrs(p, g.b.state, { git: ghGit(), gh, door: null });
+  assert.deepEqual(rs.map(r => [r.lane, r.status, r.run]), [['late', 'opened', late]], JSON.stringify(rs));
+  assert.ok(calls.every(a => !a.includes('norn/b/old')), 'no gh call for the lane archived after its DONE run');
+  // only the archived-before-DONE lane: the stale one costs no gh call at all
+  const g2 = rig(), t2 = mkTmp('meta-leader-arch2-'), rp2 = laneRepo(t2), w = rp2.lane('old', 'old.txt');
+  const id = record(g2.b.state, { kind: 'lane', ev: 'create', by: 'controller', data: { name: 'old' } }, { now: at(0), views: false }).id;
+  const r = record(g2.b.state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'fake', lane: 'old', worktree: w.wt } }, { now: at(1) });
+  record(g2.b.state, { kind: 'run', ev: 'end', id: r.id, by: 'launcher', data: { exit: 0, outcome: 'done', branch: w.branch, head: git(w.wt, 'rev-parse', 'HEAD') } }, { now: at(2) });
+  record(g2.b.state, { kind: 'lane', ev: 'archive', id, by: 'tick', data: { why: 'test' } }, { now: at(3), views: false });
+  const calls2 = [], gits = [], spy = makeGit((cwd, args) => { gits.push(args); return git(cwd, ...args) + '\n'; });
+  assert.deepEqual(followerPrs({ ...p, state: g2.b.state, deliverables: { repo: rp2.repo, main: 'main' } }, g2.b.state, { git: spy, gh: a => { calls2.push(a); return { code: 0, out: '[]', err: '' }; }, door: null }), []);
+  assert.deepEqual([calls2.length, gits.length], [0, 0], 'no gh and no git call');
+});
+
 // merge-slot (11-21: RUN-b-580 / RUN-b-581 sat queued on home b "held by the cap / the CPU" while every start was refused): a home that
 // is not the merge leader never queues a MERGE run, and one queued before is withdrawn with the leader's words - never a cap or CPU term
 test('a non-leader home refuses to queue a MERGE; a MERGE queued there before is withdrawn naming the leader', () => {
