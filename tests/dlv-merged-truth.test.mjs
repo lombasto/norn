@@ -220,7 +220,7 @@ test('a diverged remote copy older than the DONE never reads a deliverable merge
   write(repo, 'app.js', ['a']); const A = commitAll(repo, 'A');
   g(repo, 'checkout', '-q', '-b', 'feat/o'); write(repo, 'app.js', ['a', 'old']);
   const old = at(-48).toISOString(), oenv = { ...GENV, GIT_AUTHOR_DATE: old, GIT_COMMITTER_DATE: old };
-  execFileSync('git', ['-C', repo, 'commit', '-q', '-am', 'X: the old round'], { env: oenv, stdio: 'ignore' }); const X = g(repo, 'rev-parse', 'HEAD');
+  execFileSync('git', ['-C', repo, 'commit', '-q', '-am', 'X: the old round'], { env: oenv, stdio: 'ignore', windowsHide: true }); const X = g(repo, 'rev-parse', 'HEAD');
   g(repo, 'update-ref', 'refs/remotes/origin/feat/o', X); g(repo, 'checkout', '-q', 'main'); g(repo, 'branch', '-q', '-D', 'feat/o');
   g(repo, 'merge', '-q', '--squash', X); commitAll(repo, 'X squashed');
   g(repo, 'checkout', '-q', '-b', 'new-round'); write(repo, 'app.js', ['a', 'old', 'new']); const B = commitAll(repo, 'B: the new round'); g(repo, 'checkout', '-q', 'main');
