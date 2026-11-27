@@ -1,9 +1,13 @@
 // lane-collide S1a: the pure collision model (engine/lib/collide.mjs) on synthetic intents - the SPEC's incidents re-told with made-up
-// lane and item names, and their near-misses. No git, no files: the judge is pure.
+// lane and item names, and their near-misses. No git: the judge is pure (the named test reads temp briefs through briefFacts).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { collisions, recommend, readScope, staleCaveats, dead, ahead, hitLines, UNREADABLE } from '../engine/lib/collide.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
 import { parseReady } from '../engine/lib/ready.mjs';
+import { briefFacts } from '../engine/lib/intents.mjs';
+import { mkTmp } from './helpers/tmp.mjs';
 
 const I = (lane, o = {}) => ({ lane, run: null, stage: 'S1', state: 'running', since: 0, role: 'work', items: [], part_of: null, scope: null, exclusive: [],
   touched: [], commits: 0, branch: `norn/${lane}`, tip: null, dlv: null, stacked_on: [], names: {}, tests: null, done: null, brief: `/briefs/${lane}.md`, ...o });
@@ -146,4 +150,30 @@ test('recommend is the first SPEC 4A.2 row that fits: territory against a DONE b
   const a = I('a', { state: 'unlanded', run: 'RUN-1', touched: ['x/a.mjs'] }), b = I('b', { state: 'running', scope: ['x/**'] });
   assert.equal(recommend({ kind: 'territory', grade: 'covers' }, b, a).remedy, 'wait');
   assert.equal(recommend({ kind: 'territory', grade: 'covers' }, b, { ...a, state: 'running' }).why, 'a running run is never stopped for a file overlap');
+});
+
+// DEC-a-683: a brief that only cites other work is not held as building on it. A flag value is not a named lane; the Ready line
+// `Builds on:` (none, or a list) replaces the text search; without it the text is searched as before and the why says the way out.
+test('named: a --lane flag value is not a lane; "Builds on: none" names nothing; a Builds on: list is the only names; no line = searched', () => {
+  const dir = mkTmp('meta-collide-named-'), facts = (n, body) => { const f = path.join(dir, n + '.md'); fs.writeFileSync(f, `# ${n}\nScope: a/**\nTests: t\nDone: d\n${body}\n`); return briefFacts(f); };
+  const other = I('other', { state: 'unlanded', dlv: 'DLV-9', run: 'RUN-40' }), third = I('third', { state: 'unlanded', run: 'RUN-50' });
+  const cited = facts('cited', 'It failed after `norn run --lane other --worktree C:/wt/other`.');
+  assert.deepEqual(cited.names.lanes, [], 'the flag value is not a named lane');
+  assert.deepEqual(parseReady('Scope: a\nTests: t\nDone: d\n').builds_on, null);
+  assert.deepEqual(parseReady('Builds on: None\n').builds_on, []);
+  assert.deepEqual(parseReady('- Builds on: `DLV-9`, lane-x.\n').builds_on, ['DLV-9', 'lane-x']);
+  assert.deepEqual(parseReady('Builds on: none\n').missing, ['Scope:', 'Tests:', 'Done:'], 'never missing itself');
+  const none = facts('none', 'Builds on: none\nThe open PR of lane other changes this file, do not touch it (DLV-9, RUN-40).');
+  assert.deepEqual(collisions(I('me', { state: 'new', names: none.names }), [other]).filter(h => h.grade === 'named'), []);
+  const list = facts('list', 'Builds on: DLV-9\nLane third is evidence only: see lane third and RUN-50.');
+  assert.deepEqual(list.names.lanes, []);
+  const [h] = collisions(I('me', { state: 'new', names: list.names }), [other]);
+  assert.deepEqual(kinds([h]), ['order/named:warn:wait']);
+  assert.match(h.why, /the brief builds on DLV-9 \(its Builds on: line\)/);
+  assert.deepEqual(collisions(I('me', { state: 'new', names: list.names }), [third]).filter(x => x.grade === 'named'), [], 'the third lane is only cited');
+  const plain = facts('plain', 'This continues lane other, as its notes say.');
+  assert.deepEqual(plain.names.lanes, ['other']);
+  const [g] = collisions(I('me', { state: 'new', names: plain.names }), [other]);
+  assert.deepEqual(kinds([g]), ['order/named:warn:wait']);
+  assert.match(g.why, /the brief names lane other .*; if the brief only cites it, add the line "Builds on: none"$/);
 });
