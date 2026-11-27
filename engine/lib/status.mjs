@@ -25,8 +25,9 @@ const N = (x, d) => Number(x).toLocaleString('en-US', { minimumFractionDigits: d
 const ps = v => (v === undefined || v === null ? '' : String(v));   // PowerShell renders $null as ''
 const cs = capText;   // a cap: unset = no limit, said so (META-OOTB F-3: never an empty cap)
 
+// a run's last NOTES marker; null = no NOTES file (its line is left out: DEC-a-679)
 function lastMarker(notes) {
-  if (!notes || !fs.existsSync(notes)) return '(no NOTES)';
+  if (!notes || !fs.existsSync(notes)) return null;
   const lines = fs.readFileSync(notes, 'utf8').split(/\r?\n/);
   for (let i = lines.length - 1; i >= 0; i--) if (lines[i].startsWith('## ')) return `L${i + 1}: ${lines[i].slice(0, 140)}`;
   return '(no ## marker)';
@@ -111,7 +112,7 @@ export function buildStatus(o) {
   L.push(`- pause: ${pz ? `${pz.label}${pz.by ? ` by ${pz.by}` : ''}${pz.at ? ` since ${pz.at.slice(0, 16)}Z` : ''}${pz.why ? ` (${pz.why})` : ''} - ${PAUSE_MODES[pz.mode].says}` : 'none'}`);
   const items = Object.values(st.items);
   const dirs = items.filter(i => i.kind === 'directive' && i.state === 'active');
-  L.push(`- directive count: ${dirs.length} active (norn rec list --open --kind DIR; below DECISION-RULES stops and owner-only asks)`);
+  L.push(`- directive count: ${dirs.length} active (listed under ## Records; below DECISION-RULES stops and owner-only asks)`);
   const lanes = Object.entries(B.lanes || {});
   if (lanes.length) for (const [k, v] of lanes) L.push(`- lane override ${k}: executor=${ps(v.executor)}; effort=${v.effort || '(executor default)'}`);
   else L.push('- lane overrides: none (auto)');
@@ -125,7 +126,9 @@ export function buildStatus(o) {
   const alive = live.filter(isClaude).length;
   const cx = live.filter(r => String(r.data.executor).startsWith('codex'));
   const sol = cx.filter(r => r.data.executor === 'codex-sol').length, astra = cx.filter(r => r.data.executor === 'codex-astra').length;
-  L.push(`## Runs (NEW = ended since the last tick ${localMd(lastCk)}; caps count the live runs of every project)`);
+  // DEC-a-679 (oh-checkin-diet S7): only running / NEW / unreviewed runs in full, the rest one line each; paths relative to STATE
+  L.push(`## Runs (NEW = ended since the last tick ${localMd(lastCk)}; full: running, NEW, unreviewed; paths relative to STATE; caps count the live runs of every project)`);
+  const rel = p => { if (!p) return '-'; const r = path.relative(o.state, p); return (r.startsWith('..') || path.isAbsolute(r) ? p : r).replace(/\\/g, '/'); };
   const cut = now.getTime() - 12 * 3600000;
   const mine = items.filter(i => i.kind === 'run' && i.data.kind !== 'interactive' && i.data.role !== 'helper' && (i.state === 'running' || Date.parse(i.updated) >= cut));
   if (!mine.length) L.push('- (none)');
@@ -133,11 +136,14 @@ export function buildStatus(o) {
     const d = r.data, last = r.history.at(-1);
     const end = r.history.find(h => ['end', 'lost', 'kill'].includes(h.ev));
     const isNew = end && Date.parse(end.ts) > lastCk.getTime() ? 'NEW ' : '';
+    const unrev = ['exited', 'lost', 'killed'].includes(r.state) && !r.review;   // the Records block's "unreviewed"
+    if (r.state !== 'running' && !isNew && !unrev) { L.push(`- ${r.id} ${d.lane ?? '-'} ${r.state}/${end?.data?.outcome ?? r.state}`); continue; }
     const what = r.state === 'running' ? `RUNNING since ${r.created}` : r.state === 'exited'
       ? `EXITED outcome=${end.data.outcome} exit=${end.data.exit ?? '-'} end=${end.ts}` : `${r.state.toUpperCase()} ${last.ts}${end?.data?.why ? ' (' + end.data.why + ')' : ''}`;
-    L.push(`- ${isNew}**${r.id}** ${d.lane ?? '-'} ${d.executor ?? d.kind}: ${what} | ${d.model ?? '-'} ${d.effort ?? '-'} | brief ${d.brief ?? '-'}`);
-    if (d.kind !== 'checkin') L.push(`  - NOTES ${lastMarker(d.notes)}`);
-    L.push(`  - log ${d.log ?? '-'}${r.state !== 'running' && d.final ? ' | final ' + d.final : ''}`);
+    L.push(`- ${isNew}**${r.id}** ${d.lane ?? '-'} ${d.executor ?? d.kind}: ${what} | ${d.model ?? '-'} ${d.effort ?? '-'} | brief ${rel(d.brief)}`);
+    const mk = d.kind !== 'checkin' && lastMarker(d.notes);
+    if (mk) L.push(`  - NOTES ${mk}`);
+    L.push(`  - log ${rel(d.log)}${r.state !== 'running' && d.final ? ' | final ' + rel(d.final) : ''}`);
   }
   L.push(`- claude workers alive: ${alive} / cap ${cs(B.max_claude_workers)}`);
   L.push(`- codex exec runs: ${cx.length} / cap ${cs(B.max_codex)}`);
@@ -152,7 +158,7 @@ export function buildStatus(o) {
   const day = 24 * 3600000;
   const recs = [
     ...items.filter(i => i.kind === 'question' && ['open', 'answered'].includes(i.state)).flatMap(i => [`- ${i.id} ${i.state}${i.state === 'open' && now - Date.parse(i.created) > day ? ' STALE' : ''} ${i.data.lane ?? '-'}: ${i.data.title}`, ...threadStatus(i)]),   // INBOX-REPLIES: + its thread's wait
-    ...dirs.map(i => `- ${i.id} active: ${String(i.data.text).split('\n')[0].slice(0, 160)}`),
+    ...dirs.map(i => `- ${i.id} active: ${String(i.data.text).split('\n')[0].slice(0, 80)}`),   // the full text: norn rec show DIR-n (DEC-a-679)
     ...items.filter(i => i.kind === 'lane' && i.state === 'parked').map(i => `- ${i.id} parked: ${i.history.at(-1).data.why ?? ''}`),
     ...items.filter(i => i.kind === 'run' && ['exited', 'lost', 'killed'].includes(i.state) && !i.review && i.data.kind !== 'interactive' && i.data.role !== 'helper')
       .map(i => `- ${i.id} ${i.state} unreviewed ${i.data.lane ?? '-'} ${i.end?.outcome ?? i.state}`),

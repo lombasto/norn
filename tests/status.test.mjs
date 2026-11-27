@@ -101,6 +101,20 @@ test('status: runs of all projects vs caps, NEW since the last tick, Records blo
   assert.match(s.text, /^## Records$/m);
   assert.match(s.text, /^- Q-1 open .*pick one/m);
   assert.match(s.text, new RegExp(`^- ${ended.id} exited unreviewed`, 'm'));
+  // DEC-a-679: a reviewed run that is not NEW is one line; paths are relative to STATE; no NOTES file = no NOTES line; a directive shows 80 chars
+  const old = record(p.state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'w', worktree: t, brief: path.join(p.state, 'briefs', 'b.md'), log: path.join(p.state, 'logs', 'w.log') } }, { now: () => new Date(Date.now() - 7200000) });
+  record(p.state, { kind: 'run', ev: 'end', id: old.id, by: 'launcher', data: { exit: 0, outcome: 'done' } }, { now: () => new Date(Date.now() - 7100000) });
+  record(p.state, { kind: 'run', ev: 'review', id: old.id, by: 'checkin', data: { refs: ['DEC-1'] } }, { now: () => new Date(Date.now() - 7000000) });
+  const fresh = record(p.state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'v', worktree: t, brief: path.join(p.state, 'briefs', 'v.md'), log: path.join(p.state, 'logs', 'v.log'), notes: path.join(t, 'none.md') } });
+  fs.mkdirSync(path.join(p.state, 'hb'), { recursive: true }); fs.writeFileSync(path.join(p.state, 'hb', fresh.id + '.hb'), '{}');
+  record(p.state, { kind: 'directive', ev: 'create', by: 'owner', data: { text: 'x'.repeat(200) + '\nsecond line', via: 'cli' } });
+  const s2 = buildStatus({ state: p.state, project: 'demo', budget: { ...readBudget(), max_claude_workers: 3 }, projectsDir: path.join(t, 'none'), usageJson: {}, cacheFile: path.join(t, 'uc.json') });
+  assert.match(s2.text, new RegExp(`^- ${old.id} w exited/done\\r?$`, 'm'));
+  assert.doesNotMatch(s2.text, new RegExp(`\\*\\*${old.id}\\*\\*`));
+  assert.match(s2.text, new RegExp(`^- \\*\\*${fresh.id}\\*\\* v claude: RUNNING since .* \\| brief briefs/v\\.md\\r?$`, 'm'));
+  assert.match(s2.text, /^  - log logs\/v\.log\r?$/m);
+  assert.doesNotMatch(s2.text, /no NOTES/);
+  assert.match(s2.text, new RegExp(`^- DIR-\\d+ active: ${'x'.repeat(80)}\\r?$`, 'm'));
 });
 
 test('CHECKIN rendering: generic prompt + project extra, every placeholder filled', () => {
