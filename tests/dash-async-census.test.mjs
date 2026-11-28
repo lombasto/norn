@@ -95,7 +95,7 @@ test('no warmed POST write route makes a sync fs write or a sync child process',
     ['/api/pause', () => ({ project: 'kestrel', resume: 'all' })],
     // HANDOFF R1 resume 3 step 1: Settings saves (machine budget, project policy + its marked lines, a caps-profile decision) and a roadmap add
     ['/api/settings', async warm => ({ project: 'kestrel', version: (await f.get('/api/settings?project=kestrel')).data.version, changes: { max_claude_workers: warm ? 3 : 2 } })],
-    ['/api/settings', async warm => ({ project: 'kestrel', version: (await f.get('/api/settings?project=kestrel')).data.version, changes: { 'policy.context.implementer.handoff_k': warm ? 100 : 120 } })],
+    ['/api/settings', async warm => ({ project: 'kestrel', version: (await f.get('/api/settings?project=kestrel')).data.version, changes: { 'policy.context.implementer.handoff_k': warm ? 280 : 290 } })],
     ['/api/settings', async warm => { const g = (await f.get('/api/settings?project=kestrel')).data;
       const cost = warm ? 'balanced' : 'cheap';
       return { project: 'kestrel', version: g.version, changes: g.profiles.find(x => x.name === 'heavy').changes[cost], profile: { name: 'heavy', cost } }; }],

@@ -68,7 +68,7 @@ test('each tab has a data endpoint from records / runs / transcripts', async () 
     assert.deepEqual(inbox.map(i => `${i.type} ${i.id}`).sort(), ['question Q-1']);
     const tree = (await f.get('/api/agents')).data.tree;
     const w = tree.find(n => n.id === 'RUN-1'), c = tree.find(n => n.id === 'RUN-2');
-    assert.equal(w.ctx, 4 + 33810 + 31513); assert.equal(w.children[0].agentType, 'kestrel-implementer'); assert.equal(w.ctx_limit, 110000);
+    assert.equal(w.ctx, 4 + 33810 + 31513); assert.equal(w.children[0].agentType, 'kestrel-implementer'); assert.equal(w.ctx_limit, 300000);
     assert.equal(c.model, 'gpt-5.4'); assert.equal(c.tokens, 60559); assert.equal(c.tokens_src, 'live');
     const o = (await f.get('/api/strip')).data;
     assert.equal(o.needs_you, 1); assert.equal(o.running.codex.n, 1); assert.equal(o.running.codex.cap, 5);
@@ -140,15 +140,15 @@ test('settings: machine vs project split; POST saves each file atomically (409 /
     const rank = await f.post('/api/settings', { version: g.version, changes: { 'policy.executors.review.executor': 'grok' } });
     assert.equal(rank.status, 400); assert.match(JSON.stringify(rank.data), /grok is not allowed to do review work/);
     assert.ok(!s['policy.executors.review.executor'].options.includes('grok')); assert.deepEqual(s['policy.allowed_classes.grok'].value, ['chores', 'passfail']);
-    const ok = await f.post('/api/settings', { version: g.version, changes: { 'policy.context.implementer.handoff_k': 100, 'policy.iteration.escalation_multiplier': 3, 'policy.cadence.checkin_interval_min': 20 } });
+    const ok = await f.post('/api/settings', { version: g.version, changes: { 'policy.context.implementer.handoff_k': 280, 'policy.iteration.escalation_multiplier': 3, 'policy.cadence.checkin_interval_min': 20 } });
     assert.equal(ok.status, 200, JSON.stringify(ok.data));
     assert.deepEqual(ok.data.written, [f.pa.file], 'a policy-only change leaves the machine budget alone');
     assert.deepEqual(ok.data.regenerated.map(r => path.basename(r)), ['kestrel-implementer.md', 'DECISION-RULES.md']);
     assert.deepEqual(f.counts.intervals, [20]); assert.equal(ok.data.schedule.interval, 'PT20M');
     const proj = JSON.parse(fs.readFileSync(f.pa.file, 'utf8'));
-    assert.equal(proj.policy.context.implementer.handoff_k, 100); assert.equal(proj.ledger, '${root}/progress.md', 'unexpanded project keys kept');
+    assert.equal(proj.policy.context.implementer.handoff_k, 280); assert.equal(proj.ledger, '${root}/progress.md', 'unexpanded project keys kept');
     assert.deepEqual(Object.keys(proj).slice(0, 4), ['schema', 'name', 'title', 'root'], 'key order kept');
-    assert.match(fs.readFileSync(f.target, 'utf8'), /^a\nHANDOFF: start NO new step past ~90k; at ~100k .*<!-- policy:context\.implementer -->\nb\n$/);
+    assert.match(fs.readFileSync(f.target, 'utf8'), /^a\nHANDOFF: start NO new step past ~270k; at ~280k .*<!-- policy:context\.implementer -->\nb\n$/);
     assert.match(fs.readFileSync(f.rules, 'utf8'), /~3x its round estimate/);
     assert.equal((await f.post('/api/settings', { version: g.version, changes: { max_codex: 4 } })).status, 409, 'old version after a save');
     const again = (await f.get('/api/settings')).data;
