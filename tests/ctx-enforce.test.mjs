@@ -43,25 +43,34 @@ test('one measure: the CURRENT context = the last request (input + cache read + 
   assert.equal(ctxRole({ kind: 'chat' }), 'controller');
   assert.equal(ctxRole({ kind: 'worker', agent: 'kestrel-planner' }), 'planner');
   assert.equal(ctxRole({ kind: 'worker', agent: 'kestrel-implementer' }), 'implementer');
-  assert.deepEqual(POLICY_DEFAULTS.context.checkin, { no_new_step_k: 90, handoff_k: 110, hard_max_k: 150 }, 'a check-in has its own row');
+  assert.deepEqual(POLICY_DEFAULTS.context.checkin, { no_new_step_k: 120, handoff_k: 150, hard_max_k: 200 }, 'a check-in has its own row');
+  // Q-b-35 (owner): the role marks are the code defaults; the 1M rows stay (NORN-CTX-1M)
+  assert.deepEqual(POLICY_DEFAULTS.context.planner, { no_new_step_k: 300, handoff_k: 350, hard_max_k: 400 });
+  assert.deepEqual(POLICY_DEFAULTS.context.runner, { no_new_step_k: 120, handoff_k: 150, hard_max_k: 200 });
+  assert.deepEqual(POLICY_DEFAULTS.context.implementer, { no_new_step_k: 270, handoff_k: 300, hard_max_k: 350 });
+  assert.deepEqual(POLICY_DEFAULTS.context.controller, { no_new_step_k: 270, handoff_k: 300, hard_max_k: 350 });
+  assert.equal(ctxLimits({}, 'checkin').handoff_k, 150);
+  assert.deepEqual(POLICY_DEFAULTS.context.implementer_1m, { no_new_step_k: 450, handoff_k: 500, hard_max_k: 560 });
+  assert.deepEqual(POLICY_DEFAULTS.context.runner_1m, { no_new_step_k: 450, handoff_k: 500, hard_max_k: 560 });
+  assert.deepEqual(POLICY_DEFAULTS.context.planner_1m, { no_new_step_k: 800, handoff_k: 900, hard_max_k: 950 });
   assert.ok(SETTINGS.some(s => s.key === 'policy.context.checkin.handoff_k'), 'and its Settings rows');
-  const c = ctxLimits({ context: { implementer: { handoff_k: 100 } } }, 'implementer');
-  assert.deepEqual(c, { role: 'implementer', no_new_step_k: 90, handoff_k: 100, hard_max_k: 150 });
-  assert.deepEqual([89999, 90000, 100000, 150000].map(x => ctxLevel(x, c)), [null, 'no_new_step', 'handoff', 'hard_max']);
+  const c = ctxLimits({ context: { implementer: { handoff_k: 320 } } }, 'implementer');
+  assert.deepEqual(c, { role: 'implementer', no_new_step_k: 270, handoff_k: 320, hard_max_k: 350 });
+  assert.deepEqual([269999, 270000, 320000, 350000].map(x => ctxLevel(x, c)), [null, 'no_new_step', 'handoff', 'hard_max']);
   assert.equal(handoffK({ data: { kind: 'checkin' } }, { context: { checkin: { handoff_k: 70 } } }), 70, 'the guard reads the same role row');
 });
 
 test('one hand-off wording: the chat turn and a run order share the head', () => {
-  const c = ctxLimits({}, 'implementer'), head = HANDOFF_PROMPT.split(' After this turn')[0].replace('{ctx}', '120k').replace('{limit}', '110k');
-  assert.ok(runOrder('handoff', 120000, c).startsWith(head), runOrder('handoff', 120000, c));
-  assert.match(runOrder('handoff', 120000, c), /norn done --outcome handoff --handoff-file/);
-  assert.match(runOrder('no_new_step', 95000, c), /no new step/i);
+  const c = ctxLimits({}, 'implementer'), head = HANDOFF_PROMPT.split(' After this turn')[0].replace('{ctx}', '310k').replace('{limit}', '300k');
+  assert.ok(runOrder('handoff', 310000, c).startsWith(head), runOrder('handoff', 310000, c));
+  assert.match(runOrder('handoff', 310000, c), /norn done --outcome handoff --handoff-file/);
+  assert.match(runOrder('no_new_step', 280000, c), /no new step/i);
 });
 
 test('the shown limit = the run role\'s policy hand-off line (+ hard max), not the model window', () => {
   const pol = { context: { checkin: { handoff_k: 80, hard_max_k: 120 } } };
-  assert.deepEqual(ctxView({ kind: 'checkin' }, pol), { ctx_role: 'checkin', ctx_limit: 80000, ctx_hard: 120000, ctx_no_step: 90000 });
-  assert.equal(ctxView({ kind: 'worker', agent: 'x-runner' }, {}).ctx_limit, 110000);
+  assert.deepEqual(ctxView({ kind: 'checkin' }, pol), { ctx_role: 'checkin', ctx_limit: 80000, ctx_hard: 120000, ctx_no_step: 120000 });
+  assert.equal(ctxView({ kind: 'worker', agent: 'x-runner' }, {}).ctx_limit, 150000);
 });
 
 test('Agents: a check-in shows its LAST request (not the summed end usage), its peak and its role\'s hand-off line', () => {
@@ -75,7 +84,7 @@ test('Agents: a check-in shows its LAST request (not the summed end usage), its 
   assert.equal(n.ctx, 61000, 'the last request');
   assert.equal(n.ctx_peak, 64000);
   assert.equal(n.ctx_limit, 100000);
-  assert.equal(n.ctx_hard, 150000);
+  assert.equal(n.ctx_hard, 200000);
   const [m] = agentsTree([{ ...run, data: { ...run.data, session_id: null } }], { projectsDir: projects, cache: new Map(), now });
   assert.equal(m.ctx, null, 'no transcript = no context number (never the summed usage)');
 });

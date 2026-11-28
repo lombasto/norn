@@ -50,9 +50,10 @@ export const POLICY_DEFAULTS={
   allowed_classes:{},
   critical_lanes:[],critical_effort:'high',
   fallbacks:{claude_over_guard:'codex-astra',codex_down:'implementer',fable_unavailable:'opus-xhigh'},
-  context:{implementer:{no_new_step_k:90,handoff_k:110,hard_max_k:150},planner:{no_new_step_k:90,handoff_k:150,hard_max_k:150},
-    runner:{no_new_step_k:90,handoff_k:110,hard_max_k:150},controller:{no_new_step_k:90,handoff_k:110,hard_max_k:150},
-    checkin:{no_new_step_k:90,handoff_k:110,hard_max_k:150},   // META-CTX-ENFORCE R1: a check-in's own row (ctxlimit.mjs ctxRole)
+  // owner Q-b-35 (WORK-SIZING S3a): the role marks; a new project on the old 90/110/150 thrashed (sizing.mjs)
+  context:{implementer:{no_new_step_k:270,handoff_k:300,hard_max_k:350},planner:{no_new_step_k:300,handoff_k:350,hard_max_k:400},
+    runner:{no_new_step_k:120,handoff_k:150,hard_max_k:200},controller:{no_new_step_k:270,handoff_k:300,hard_max_k:350},
+    checkin:{no_new_step_k:120,handoff_k:150,hard_max_k:200},   // META-CTX-ENFORCE R1: a check-in's own row (ctxlimit.mjs ctxRole)
     implementer_1m:{no_new_step_k:450,handoff_k:500,hard_max_k:560},runner_1m:{no_new_step_k:450,handoff_k:500,hard_max_k:560},
     planner_1m:{no_new_step_k:800,handoff_k:900,hard_max_k:950}},   // NORN-CTX-1M (DIR-100): the row of a run whose model has a 1M window ([1m]; ctxRole)
   sizing:{thrash_startup_pct:60,loose_pct:40},   // WORK-SIZING S1 (sizing.mjs verdict): a first edit at this share of the no-new-step mark in hand-off sessions = thrashing; every peak under loose_pct of the hand-off mark = loose

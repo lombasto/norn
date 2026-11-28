@@ -37,7 +37,7 @@ test('settingsView rows carry their section and the machinery default (modified-
   const rows = settingsView({ max_codex: 3, policy: { context: { implementer: { no_new_step_k: 170, handoff_k: 200, hard_max_k: 220 } } } }, { providers: PV });
   const by = Object.fromEntries(rows.map(s => [s.key, s]));
   assert.deepEqual(by['policy.context.implementer.handoff_k'].section, ['agents', 'context', 'implementer']);
-  assert.equal(by['policy.context.implementer.handoff_k'].default, 110); assert.equal(by['policy.context.implementer.handoff_k'].modified, true);
+  assert.equal(by['policy.context.implementer.handoff_k'].default, 300); assert.equal(by['policy.context.implementer.handoff_k'].modified, true);
   assert.equal(by['policy.context.planner.handoff_k'].modified, false);
   assert.equal(by['max_codex'].default, undefined, 'machine key without a machinery default'); assert.equal(by['max_codex'].modified, false);
   assert.equal(by['desired_burn_pct_per_h'].default, 0.4);

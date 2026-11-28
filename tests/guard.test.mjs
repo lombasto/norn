@@ -73,7 +73,7 @@ function fixture() {
   record(st, { kind: 'run', ev: 'end', id: pl, by: 'launcher', data: { outcome: 'done', exit: 0, usage: { cache_read_input_tokens: 90e6 } } }, at('2026-11-12T09:00:00Z'));
   runFile(pdir, 'normal', { n: 30 });
   runFile(pdir, 'runaway', { n: 227, ctx0: 60000, grow: 1100 });
-  runFile(pdir, 'over', { n: 12, ctx0: 115000, grow: 300 });
+  runFile(pdir, 'over', { n: 12, ctx0: 305000, grow: 300 });
   runFile(pdir, 'spam', { n: 42, ctx0: 5000, grow: 2500, tool: TESTS, result: 10000, big: { at: 3, chars: 100000 } });
   const ids = { normal: start('normal', '2026-11-13T09:59:00Z', { lane: 'docs' }), runaway: start('runaway', '2026-11-13T09:59:00Z'),
     over: start('over', '2026-11-13T09:59:00Z', { lane: 'map' }), spam: start('spam', '2026-11-13T09:59:00Z', { lane: 'tests' }) };
@@ -93,7 +93,7 @@ test('runaway watch: a RUN-576-shaped run passes k x its peers\' median (same ki
   assert.ok(cls(ids.runaway).includes('runaway'));
   assert.match(r.flags.find(f => f.cls === 'runaway').why, /x the median 6\.0M of 4 peers \(worker \/ kestrel-implementer \/ high\); 227 turns \(median 60\)/);
   assert.deepEqual(cls(ids.over), ['over-handoff']);
-  assert.match(run(ids.over).flags[0].why, /above the hand-off line \(110k\) for the last 12 calls/);
+  assert.match(run(ids.over).flags[0].why, /above the hand-off line \(300k\) for the last 12 calls/);
   assert.deepEqual(cls(ids.spam), ['tool-spam']);
   assert.match(run(ids.spam).flags[0].why, /% of its cache reads are tool output \(test runner \d+ %\); one test runner result ~25k tokens/);
   // k and the floor are policy: k 10 quiets the runaway; a 100M floor too
