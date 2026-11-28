@@ -379,7 +379,10 @@ const names = (q, r) => { const t = [q.data?.title, q.data?.body, q.data?.source
 export function closeLandedQuestions(stateDir, { project = {}, now, nowMs, git, dry = false } = {}) {
   const open = Object.values(loadShared(stateDir, 'question').items).filter(q => q.kind === 'question' && q.state === 'open');
   if (!open.length) return [];
-  const landed = deliverablesView({ stateDir, project, now: nowMs ?? (now ? now().getTime() : Date.now()), ...(git ? { git } : {}), questions: open }).rows.filter(isLanded);
+  // DEC-b-86 (rm7): superseded says the DLV's work landed another way, not that its branch did - one whose branch git reads off main
+  // (later commits: state done, judge's ancestor / patch / content rules all failed) names work still to land, so its questions stay
+  const landed = deliverablesView({ stateDir, project, now: nowMs ?? (now ? now().getTime() : Date.now()), ...(git ? { git } : {}), questions: open }).rows
+    .filter(r => isLanded(r) && !(r.superseded && r.state === 'done'));
   if (!landed.length) return [];
   const byId = new Map(landed.map(r => [r.id, r])), out = [];
   for (const q of open) {
