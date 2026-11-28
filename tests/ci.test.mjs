@@ -75,10 +75,10 @@ test('ci.yml: push to main + nightly + dispatch, never a pull request; the full 
 test('ci.yml: each Rust part is built once per job through ensurePart, and norn-code\'s cargo checks reuse its target dir', () => {
   const s = WF('ci.yml').split(/\r?\n/).filter(l => l.trim() && !l.trim().startsWith('#')).map(l => l.trim());
   const c = s.indexOf('path: .git/norn/rust/bin'), b = s.findIndex(l => l.startsWith("- name: Norn's Rust parts")), at = s.indexOf('- name: suite (fails only on a red not in tests/KNOWN-REDS.txt)');
-  assert.ok(c > 0 && s[c - 2] === '- uses: actions/cache@v4' && s[c + 1] === "key: rust-hook-code-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('engine/hook-rs/**', '!engine/hook-rs/target/**', 'engine/code-rs/**', '!engine/code-rs/target/**') }}", 'the store\'s bin/ cached by the parts\' sources');
+  assert.ok(c > 0 && s[c - 2] === '- uses: actions/cache@v4' && s[c + 1] === "key: rust-hook-code-jobguard-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('engine/hook-rs/**', '!engine/hook-rs/target/**', 'engine/code-rs/**', '!engine/code-rs/target/**', 'engine/jobguard-rs/**', '!engine/jobguard-rs/target/**') }}", 'the store\'s bin/ cached by the parts\' sources');
   assert.ok(s.indexOf('- uses: actions/setup-node@v4') < b && s[s.indexOf('- uses: actions/setup-node@v4') + 1] === 'with:', 'node on every leg (ensurePart is Node), before the build');
   assert.ok(b > c && b < at, 'the build step runs after the cache restore, before the suite');
-  assert.deepEqual(s.slice(b + 1, b + 5), ['env:', "PARTS: ${{ matrix.code_rs_only && 'code' || 'hook code' }}", 'shell: bash', 'run: |']);
+  assert.deepEqual(s.slice(b + 1, b + 5), ['env:', "PARTS: ${{ matrix.code_rs_only && 'code' || 'hook code jobguard' }}", 'shell: bash', 'run: |']);
   const body = s.slice(b + 5, s.findIndex((l, k) => k > b && l.startsWith('- ') && !l.startsWith('- name: Norn')));
   assert.ok(body.includes('import { ensurePart, binOf } from "./engine/lib/rustbin.mjs";') && body.some(l => /ensurePart\(p, /.test(l)) && body.some(l => l.includes('process.exit(1)')), 'Norn\'s part build; a part that cannot be had fails the step');
   const tgt = body.indexOf('export CARGO_TARGET_DIR="$(node --input-type=module -e \'import { targetOf } from "./engine/lib/rustbin.mjs"; console.log(targetOf("code"))\')"');
@@ -117,8 +117,8 @@ test('pr.yml: slop, smoke and tests build their Rust parts through ensurePart be
   const lines = WF('pr.yml').split(/\r?\n/).filter(l => l.trim() && !l.trim().startsWith('#')).map(l => l.trim());
   const job = n => { const i = lines.indexOf(`${n}:`), j = lines.findIndex((l, k) => k > i && /^(slop|smoke|tests):$/.test(l)); return lines.slice(i + 1, j < 0 ? undefined : j); };
   const key = parts => `key: rust-${parts.join('-')}-\${{ runner.os }}-\${{ runner.arch }}-\${{ hashFiles(${parts.map(p => `'engine/${p}-rs/**', '!engine/${p}-rs/target/**'`).join(', ')}) }}`;
-  for (const [n, parts, check] of [['slop', ['code'], "- name: slop check of the PR's diff from its merge base"], ['smoke', ['hook', 'code'], '- name: norn smoke'],
-    ['tests', ['hook', 'code'], '- name: the tests of the changed files (fails only on a red not in tests/KNOWN-REDS.txt)']]) {
+  for (const [n, parts, check] of [['slop', ['code'], "- name: slop check of the PR's diff from its merge base"], ['smoke', ['hook', 'code', 'jobguard'], '- name: norn smoke'],
+    ['tests', ['hook', 'code', 'jobguard'], '- name: the tests of the changed files (fails only on a red not in tests/KNOWN-REDS.txt)']]) {
     const s = job(n), c = s.indexOf('path: .git/norn/rust/bin'), b = s.findIndex(l => l.startsWith("- name: Norn's Rust parts")), at = s.indexOf(check);
     assert.ok(c > 0 && s[c - 2] === '- uses: actions/cache@v4' && s[c + 1] === key(parts), `${n}: the store's bin/ cached by the parts' sources`);
     assert.ok(b > c && b < at, `${n}: the build step runs after the cache restore, before the check`);

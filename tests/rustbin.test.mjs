@@ -275,8 +275,9 @@ const cargoOn = () => assert.equal(spawnSync('cargo', ['--version'], { windowsHi
 // names that sort one way by UTF-16 unit (JavaScript's sort) and the other by UTF-8 byte (U+FF5E vs U+1F600), '-' before '/', a
 // target/ below the root (left out at any depth), an empty file and bytes that are no text
 const VECTOR = { 'data/～.txt': 'bmp', 'data/\u{1f600}.txt': 'astral', 'src-x.txt': 'dash', 'data/target/skip.txt': 'never hashed', 'data/empty': '', 'data/bytes.bin': Buffer.from([0, 255, 0, 10, 13]) };
-test('build.rs: one file in both crates, the source-hash rule of rustbin.mjs sourceHash', () => {
+test('build.rs: one file in every crate, the source-hash rule of rustbin.mjs sourceHash', () => {
   assert.equal(fs.readFileSync(path.join(srcOf('code'), 'build.rs'), 'utf8'), fs.readFileSync(path.join(srcOf('hook'), 'build.rs'), 'utf8'), 'engine/code-rs/build.rs = engine/hook-rs/build.rs');
+  assert.equal(fs.readFileSync(path.join(srcOf('jobguard'), 'build.rs'), 'utf8'), fs.readFileSync(path.join(srcOf('hook'), 'build.rs'), 'utf8'), 'engine/jobguard-rs/build.rs = engine/hook-rs/build.rs');
 });
 test('real cargo: two sources of one part into one store - A B A; A B, A\'s entry deleted, A; A and B at once - each stored file answers its own source', async t => {
   cargoOn();

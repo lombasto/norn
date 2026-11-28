@@ -428,6 +428,12 @@ with no wrong definition and no wrong chosen call edge (tests/code-graph-grade.t
   code.lock                            the part's build lock (below); hook.lock is norn-hook's
 ```
 
+The store holds every Rust part of RUST_PARTS the same way: norn-hook (engine/hook-rs), norn-code, and norn-jobguard
+(engine/jobguard-rs, RM-26 S6B: the native `run` verb of jobguard.cs, built wherever norn-hook is: setup, run start, the Done check
+of a Norn worktree, CI's parts step). bounded.mjs boundedSync / boundedAsync run their child through norn-jobguard on Windows when
+its file is in the store (rustbin.mjs hands bounded.mjs the path: bounded.mjs is a leaf module), else through the C# helper, as on a
+machine without cargo. Measured: ~11 ms over a direct start, against ~30 ms for the C# helper.
+
 - What reads which binary: every reader (codegraph.mjs, the supervisor, `norn done`, setup, smoke, the hooks of a claude run)
   reads `bin/<bin>-<source sha12>` through `binOf`. A checkout's own engine/code-rs/target/release (or engine/hook-rs/...), which a
   plain `cargo build` in the crate writes, is read by nothing since #235; nor is `target/code/release/norn-code` itself, which is

@@ -1,7 +1,7 @@
 # The full node suite on GitHub-hosted runners (Windows + Linux) after the merge: on a push to main and nightly. A pull request runs
 # the fast check instead (pr.yml, META-PR-FAST RM-29): slop, smoke and the tests of the files it changes.
-# engine/bin/ci-suite.mjs fails only on a red NOT listed in tests/KNOWN-REDS.txt. Before the suite, norn-hook and norn-code are built
-# once through rustbin ensurePart (cached by their sources) and norn-code (engine/code-rs, the code graph: docs/code-graph.md) is
+# engine/bin/ci-suite.mjs fails only on a red NOT listed in tests/KNOWN-REDS.txt. Before the suite, norn-hook, norn-code and
+# norn-jobguard are built once through rustbin ensurePart (cached by their sources) and norn-code (engine/code-rs, the code graph: docs/code-graph.md) is
 # gated: test, fmt and clippy with --locked in that build's target dir; macOS runs that step only, for norn-code (DEC-a-574).
 name: ci
 
@@ -54,13 +54,13 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: .git/norn/rust/bin
-          key: rust-hook-code-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('engine/hook-rs/**', '!engine/hook-rs/target/**', 'engine/code-rs/**', '!engine/code-rs/target/**') }}
+          key: rust-hook-code-jobguard-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('engine/hook-rs/**', '!engine/hook-rs/target/**', 'engine/code-rs/**', '!engine/code-rs/target/**', 'engine/jobguard-rs/**', '!engine/jobguard-rs/target/**') }}
       # RM-26 S2: the one build of each part per job is Norn's own (rustbin ensurePart, as pr.yml), so the suite's rustReady finds the
       # content-named binary and builds nothing; norn-code's test, fmt and clippy run in ensurePart's target dir (targetOf), so the
       # crate's dependencies compile once per job. macOS gates norn-code only.
-      - name: Norn's Rust parts (norn-hook, norn-code) - ensurePart, then norn-code's test, fmt, clippy in its target dir
+      - name: Norn's Rust parts (norn-hook, norn-code, norn-jobguard) - ensurePart, then norn-code's test, fmt, clippy in its target dir
         env:
-          PARTS: ${{ matrix.code_rs_only && 'code' || 'hook code' }}
+          PARTS: ${{ matrix.code_rs_only && 'code' || 'hook code jobguard' }}
         shell: bash
         run: |
           rustup component add rustfmt clippy

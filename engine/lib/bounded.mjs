@@ -2,6 +2,8 @@
 // gitfacts, claimsref, overlap, ...) import a leaf: jobguard.mjs reaches strays -> records, and every module importing it joined that
 // import cycle. The helper is C# (jobguard.cs) compiled on first use with the csc.exe of .NET Framework 4 (every Windows 10 / 11; no
 // native npm build), cached as <tmp>/meta-jobguard-<source sha>.exe. No csc / compile failure = null: callers go on unguarded.
+// Its `run` verb (the bounded child) has a native twin, norn-jobguard (engine/jobguard-rs, a Rust part: ~17 ms less per call, RM-26
+// S6B), same contract; boundedSync / boundedAsync take it when it is built (runExe), else the C# helper (a machine without cargo).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -75,7 +77,16 @@ export function winQuote(a) {
 // no CPU: their parent (a node of Norn, gh, Git's cmd\git.exe launcher) was killed between CreateProcess and the resume (a taskkill
 // /T, a spawnSync timeout, a reap). No timeout on the direct child reaches them; a job does. boundedSync runs the child under
 // `jobguard run`, whose own job holds every descendant from birth and dies at the timeout, at the child's exit, or with the helper.
-let jgExe;
+let jgExe, rsOf = () => null;
+/** rustbin.mjs hands its norn-jobguard path here (this module is a leaf: it imports no part of Norn) */
+export function useRunHelper(of) { rsOf = of; }
+/** the `run` helper of a bounded child: norn-jobguard when its content-named file exists (built: setup, run start, Done check),
+ * else the C# helper - compiled when missing, or (compile false: never block the event loop) only if already cached - else '' */
+export function runExe({ platform = process.platform, rs = rsOf(), compile = true } = {}) {
+  if (platform !== 'win32') return '';
+  if (rs && fs.existsSync(rs)) return rs;
+  return compile ? (jgExe ??= jobguardExe() || '') : (jgExe || jobguardCached() || '');
+}
 const PATHEXT = ['.exe', '.com'];
 // the program's full path from PATH (CreateProcess would search the cwd first: a worktree's git.exe must never run); else as given
 function resolveExe(file, env = process.env) {
@@ -90,7 +101,7 @@ function resolveExe(file, env = process.env) {
 export function boundedSync(file, args, { timeout, cwd, env, input, encoding = 'utf8', maxBuffer = 64 << 20, exe } = {}) {
   if (!(timeout > 0)) throw new Error('boundedSync needs a timeout');
   const base = { cwd, env, encoding, maxBuffer, windowsHide: true, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], ...(input === undefined ? {} : { input }) };
-  if (exe === undefined) exe = process.platform === 'win32' ? (jgExe ??= jobguardExe() || '') : '';
+  if (exe === undefined) exe = runExe();
   if (!exe) return spawnSync(file, args, { ...base, timeout });
   const r = spawnSync(exe, ['run', String(timeout), cwd || '-', [resolveExe(file, env), ...args].map(winQuote).join(' ')], { ...base, timeout: timeout + 10000 });
   const e = String(r.stderr || '');
@@ -100,10 +111,10 @@ export function boundedSync(file, args, { timeout, cwd, env, input, encoding = '
 }
 
 /** boundedSync off the event loop (the async git of branches.mjs and the sync loop): resolves the same shape, never rejects. Never
- * compiles the helper (that blocks): an uncompiled one = execFile's own timeout, direct child only */
+ * compiles the C# helper (that blocks): no built helper = execFile's own timeout, direct child only */
 export function boundedAsync(file, args, { timeout, cwd, env, encoding = 'utf8', maxBuffer = 64 << 20, exe } = {}) {
   if (!(timeout > 0)) throw new Error('boundedAsync needs a timeout');
-  if (exe === undefined) exe = process.platform === 'win32' ? (jgExe || jobguardCached() || '') : '';
+  if (exe === undefined) exe = runExe({ compile: false });
   const base = { cwd, env, encoding, maxBuffer, windowsHide: true };
   return new Promise(ok => {
     const done = (e, out, err) => {
