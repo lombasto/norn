@@ -5,12 +5,14 @@ Budget: small. Read only what is listed (tail / line ranges, never whole long fi
 Controller hand-off: start no new step past ~90k; hand off at ~110k; never past ~150k. <!-- policy:context.controller -->
 
 ## 1. Read (in this order, nothing else unless a step needs it)
-- STATUS {{status}} (fresh, from "norn status"; its "## Records" block lists open / answered-unapplied questions, active
-  directives, parked lanes, unreviewed runs) and the BUDGET file {{budget}} (a cap of 0 = dispatch nothing on that executor).
-- LEDGER {{ledger}} LAST 40 lines.
+- STATUS {{status}}, once, whole; do not grep it again (fresh, from "norn status"; its "## Records" block lists open /
+  answered-unapplied questions, active directives, parked lanes, unreviewed runs; "## Runs" shows running, NEW and unreviewed runs
+  in full, every other run on one line, paths relative to STATE) and the BUDGET file {{budget}} (a cap of 0 = dispatch nothing on that executor).
+- LEDGER {{ledger}}, once, its LAST 40 lines.
 - Rules, whole: {{rules}}
 - Records: the "## Records" block (ids + states, RECORDS.md). Do not re-ask a subject that has an open Q; never read or edit the generated views.
-- Active directives: `META rec list --open --kind DIR` (only these bind). Obey them above dispatch defaults,
+- Active directives: the STATUS "## Records" block lists them all, each in its first 80 characters (only these bind);
+  `META rec show DIR-n` gives the full text of one you act on. Obey them above dispatch defaults,
   but below the rules' stops / owner-only asks and the hard safety rules, caps, RATE_OK and one-writer gate below.
   Never interpret a directive as permission to violate section 4, exceed a cap, or dispatch a paused lane.
   A Fix all directive (data.fixall) is the engine's: never read its ids; `META fix start DIR-n` only if the tick log shows it did not.
