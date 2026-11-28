@@ -2,6 +2,9 @@
 // MATERIAL state changed since the last real check-in. The fingerprint is a sorted set of facts:
 //   records (folded): live runs, unreviewed ends (exited / lost / killed), stalls (past budget_min x wall_time_multiplier),
 //   open / answered questions, active directives, overruled decisions, lane states, the count of owner / dashboard events;
+//   mail (the whole mailbox, own log + other homes' copies: mailFacts): open mail to this home's check-in, and open mail to its
+//   controller once checkin_take_min old - compared with the mail list the last check-in was launched with (a copied event
+//   carries the sender's ts, not its arrival here, so "events up to its start" cannot tell what it saw);
 //   live (stored at launch, not in the records): weekly-burn guard band (5 % buckets), RATE_OK, the rate leaving the near-cap
 //   quarter, a cap raise, QUIET, a PAUSED flip; probes (GT-5 seam: mtime stalls) add their own facts.
 // R2 replay (48 h, 271 check-ins): a "lane with a queued next stage AND a free slot" fact never gated an action alone (a slot that
@@ -12,7 +15,8 @@
 // checkin_max_quiet_min -> forced. Later slices add event types here (deliverable aged, executor-agnostic check-ins).
 import fs from 'node:fs';
 import path from 'node:path';
-import { readEvents, recordsFile, fold, homeOf, roleAddrIn } from './records.mjs';
+import { readEvents, recordsFile, fold } from './records.mjs';
+import { loadMail, boxOf, stored, controllerMail, CHECKIN_TAKE_MIN } from './mail.mjs';
 import { MACHINE_DEFAULTS } from './policy.mjs';
 import { findTranscript } from './harness/claude.mjs';
 import { unanswered } from './qthread.mjs';
@@ -35,10 +39,10 @@ function writeGate(state, g) {
 }
 const keep = g => ({ skips: g?.skips || 0, skips_by_day: g?.skips_by_day || {}, ...(g?.paused_at ? { paused_at: g.paused_at } : {}) });
 /** the check-in `run` (started at `start`) is the new baseline; live = { band, rate_ok, quiet } it was launched under; forced / quiet_n = the
- * gate verdict it ran on (piece 3 backoff: a woken check-in stores quiet_n 0) */
-export function noteCheckin(state, { run, start, live = {}, budget = {}, forced = false, quiet_n = 0 }) {
+ * gate verdict it ran on (piece 3 backoff: a woken check-in stores quiet_n 0); mail = the verdict's mailFacts (open mail only: small) */
+export function noteCheckin(state, { run, start, live = {}, budget = {}, forced = false, quiet_n = 0, mail = [] }) {
   const g = readGate(state);
-  writeGate(state, { ...keep(g), run, start, live, caps: capsOf(budget), forced: !!forced, quiet_n: forced ? quiet_n : 0, last: { ts: start, verdict: 'checkin' } });
+  writeGate(state, { ...keep(g), run, start, live, caps: capsOf(budget), forced: !!forced, quiet_n: forced ? quiet_n : 0, mail, last: { ts: start, verdict: 'checkin' } });
 }
 export function noteSkip(state, why, now = new Date()) {
   const g = readGate(state) || {}, day = now.toISOString().slice(0, 10);
@@ -56,12 +60,10 @@ export function notePaused(state, now = new Date()) {
 /**
  * the fingerprint facts of (record events, run events) at time `at` (ms); mult = wall_time_multiplier. probes: [(ctx) => facts]
  * with ctx { at, running, runs, items } - the GT-5 seam (a live run whose log / transcript mtime has not moved for N min is a
- * stall the budget clock cannot see); their facts are major wakes unless MINOR_FACTS lists their prefix.
+ * stall the budget clock cannot see); their facts are major wakes unless MINOR_FACTS lists their prefix. Mail is not here: mailFacts.
  */
-export function facts(recEvs, runEvs, { at, mult = 2, probes = [], dlvEvs = [], mailEvs = [], levelOf = () => 'full', home = null }) {
+export function facts(recEvs, runEvs, { at, mult = 2, probes = [], dlvEvs = [], levelOf = () => 'full' }) {
   const F = new Set();
-  // META-GTP-MAIL piece 4: mail addressed to the check-in and not acked yet (a run's reply) - a MAJOR wake; only its arrival is news
-  for (const m of Object.values(fold(mailEvs).items)) if (m.kind === 'mail' && m.data.to === roleAddrIn('checkin', home) && m.state !== 'acked') F.add(`mail:${m.id}`);
   // META-CHECKIN-DIET R1 lane levels (checkins.mjs laneLevel): none = no fact of its runs; on-end = its ends and stalls only
   const runs = Object.values(fold(runEvs).items).filter(r => isWork(r.data) && levelOf(r.data.lane) !== 'none');
   const running = runs.filter(r => r.state === 'running');
@@ -124,10 +126,10 @@ const liveFacts = (live, other, pausedFlip) => {
 // one-way facts: only the OPENING direction is news - the rate leaving the near-cap quarter, a cap raise (a cut, or the rate
 // climbing towards the cap, only means "start nothing new", which needs no check-in)
 const capRaises = (baseCaps, caps) => Object.entries(caps || {}).filter(([k, v]) => Number.isFinite(baseCaps?.[k]) && v > baseCaps[k]).map(([k, v]) => `+cap:${k}:${v}`);
-// an acked mail leaving is no news; nor is a red CI run leaving (main went green: META-CIWATCH wakes on the red only)
-const opening = ch => ch.filter(x => x !== '+rate_near:1' && x !== '-rate_near:0' && !x.startsWith('-mail:') && !x.startsWith('-ci:'));
+// a red CI run leaving is no news (main went green: META-CIWATCH wakes on the red only)
+const opening = ch => ch.filter(x => x !== '+rate_near:1' && x !== '-rate_near:0' && !x.startsWith('-ci:'));
 const diff = (a, b) => [...[...b].filter(x => !a.has(x)).map(x => '+' + x), ...[...a].filter(x => !b.has(x)).map(x => '-' + x)];
-const loadEvents = state => ({ home: homeOf(state)?.id ?? null, rec: readEvents(recordsFile(state, 'question')), run: readEvents(recordsFile(state, 'run')), dlv: readEvents(recordsFile(state, 'deliverable')), mail: readEvents(recordsFile(state, 'mail')) });
+const loadEvents = state => ({ rec: readEvents(recordsFile(state, 'question')), run: readEvents(recordsFile(state, 'run')), dlv: readEvents(recordsFile(state, 'deliverable')) });
 // what check-in `run` saw: everything up to its start + its own actions while it was alive (a worker it dispatched inherits
 // META_RUN_ID, so that worker's later end / resume events carry the check-in's id too: those are news, not its own action)
 export const endOf = (runEvs, run) => { const it = fold(runEvs).items[run]; const h = it?.history.find(x => ['end', 'lost', 'kill'].includes(x.ev)); return h ? Date.parse(h.ts) : Infinity; };
@@ -142,22 +144,30 @@ export const actionsOf = (evs, run, endMs, checkins = new Set()) => [...new Set(
   && !(e.kind === 'run' && SUPERVISOR_EVS.includes(e.ev)) && !(e.kind === 'run' && e.ev === 'review' && checkins.has(e.id)))
   .map(e => `${e.kind}.${e.ev}`))].sort();
 
-/** compare what check-in `base` (start startMs) saw with the state at nowMs; returns { skip, changes } */
+/** compare what check-in `base` (start startMs) saw with the state at nowMs; returns the changes (none = skip) */
 function compare(E, base, startMs, nowMs, { caps, baseCaps, mult, live, baseLive, pausedFlip, probes = [], levelOf }) {
   const endMs = endOf(E.run, base);
-  const b = facts(seenBy(E.rec, base, startMs, endMs), seenBy(E.run, base, startMs, endMs), { at: startMs, mult, probes, levelOf, home: E.home, dlvEvs: seenBy(E.dlv || [], base, startMs, endMs), mailEvs: seenBy(E.mail || [], base, startMs, endMs) });
-  const c = facts(E.rec, E.run, { at: nowMs, mult, probes, levelOf, home: E.home, dlvEvs: E.dlv || [], mailEvs: E.mail || [] });
+  const b = facts(seenBy(E.rec, base, startMs, endMs), seenBy(E.run, base, startMs, endMs), { at: startMs, mult, probes, levelOf, dlvEvs: seenBy(E.dlv || [], base, startMs, endMs) });
+  const c = facts(E.rec, E.run, { at: nowMs, mult, probes, levelOf, dlvEvs: E.dlv || [] });
   for (const x of liveFacts(baseLive, live)) b.add(x);
   for (const x of liveFacts(live, baseLive, pausedFlip)) c.add(x);
   // META-CHECKIN-DIET R1: a run the tick's code closed as routine (a launcher review) is no news: its run leaving, its deliverable
   const rt = routineIds(E.run, startMs), dlvRun = fold(E.dlv || []).items;
-  const news = x => !(x.startsWith('-run:') && rt.has(x.slice(5))) && !(x.startsWith('+dlv:') && rt.has(dlvRun[x.split(':')[1]]?.data?.run));
-  const changes = [...opening(diff(b, c)).filter(news), ...capRaises(baseCaps ?? caps, caps)];
-  return changes.length ? { skip: false, changes, why: changed(changes) } : { skip: true, changes };
+  // DEC-a-680: so is a lane the tick archived by rule (lifecycle.mjs tickLanes) unless the archive names work at risk (kept worktree)
+  const ta = tickArchived(E.rec, startMs);
+  const news = x => !(x.startsWith('-run:') && rt.has(x.slice(5))) && !(x.startsWith('+dlv:') && rt.has(dlvRun[x.split(':')[1]]?.data?.run))
+    && !(x.startsWith('-lane:') && ta.has(x.slice(6, x.lastIndexOf(':'))));
+  return [...opening(diff(b, c)).filter(news), ...capRaises(baseCaps ?? caps, caps)];
 }
 /** ids of runs a launcher ROUTINE review (checkins.mjs handleRoutineEnds) closed at or after sinceMs (ts has second resolution: a review in the start second of the check-in is still after it, never seen by it) */
 export const routineIds = (runEvs, sinceMs = -Infinity) => new Set(runEvs.filter(e => e.kind === 'run' && e.ev === 'review' && e.by === 'launcher' && e.data?.routine
   && Date.parse(e.ts) >= sinceMs).map(e => e.id));
+/** ids of lanes whose last archive at or after sinceMs is by the tick with no data.at_risk (a clean rule archive: no one has to act) */
+const tickArchived = (recEvs, sinceMs) => {
+  const last = new Map();
+  for (const e of recEvs) if (e.kind === 'lane' && e.ev === 'archive' && Date.parse(e.ts) >= sinceMs) last.set(e.id, e.by === 'tick' && !e.data?.at_risk);
+  return new Set([...last].filter(([, clean]) => clean).map(([id]) => id));
+};
 // GT-5 seam: a MINOR wake carries only facts a reduced-effort tick could handle (time, a start by another, a vanished run, the
 // guard band, the owner-event count); any other fact - or one a probe adds - is MAJOR. CHECKIN-V2 piece 2: a minor wake runs the
 // reduced tick (CHECKIN-MINOR.md on checkin_minor_model); its "MAJOR NEEDED" escalates the next tick to a full one.
@@ -197,30 +207,54 @@ export const quietWindow = (n, base, cap) => Math.min(base * 2 ** n, Math.max(ba
 export const nextQuietN = (n, forced, acted, base, cap) => (!forced || acted ? 0 : base > 0 && base * 2 ** n < cap ? n + 1 : n);
 // review targets that are bookkeeping, not news: check-in runs and HELPER runs (a helper's end belongs to its parent; CHECKIN-V2 replay RUN-1658)
 export const bookkeepingIds = runEvs => new Set(Object.values(fold(runEvs).items).filter(i => i.data.kind === 'checkin' || i.data.role === 'helper').map(i => i.id));
+/**
+ * archive-wake S2 (DEC-a-682 item 1): the mail facts over the WHOLE mailbox (own log + other homes' copies): mail:<id> = open mail
+ * in this home's check-in box (a run's reply, another home's mail); cmail:<id> = open mail for this home's controller at least
+ * takeMin old (CHECKIN.md sec. 1: a MAJOR check-in takes it - with no controller session it would wait for an unrelated wake)
+ */
+export function mailFacts(state, { now = Date.now(), takeMin = CHECKIN_TAKE_MIN } = {}) {
+  const box = boxOf(state, { to: 'role:checkin' });
+  const F = Object.values(loadMail(state)).filter(m => m.state !== 'acked' && box.has(stored(state, m))).map(m => `mail:${m.id}`);
+  for (const m of controllerMail(state, { now })) if (m.age_min >= takeMin) F.push(`cmail:${m.id}`);
+  return F.sort();
+}
+// the mail facts at this tick and those the baseline check-in was not launched with (as +changes): a check-in stores `mail`, fresh is MAJOR
+const mailNews = (o, g, now) => {
+  const mail = mailFacts(o.state, { now, takeMin: Number(o.policy?.mail?.checkin_take_min ?? CHECKIN_TAKE_MIN) }), had = new Set(g?.mail || []);
+  return { mail, fresh: mail.filter(x => !had.has(x)).map(x => '+' + x) };
+};
 const changed = ch => `changed: ${ch.slice(0, 6).join(', ')}${ch.length > 6 ? ` (+${ch.length - 6} more)` : ''}`;
+// the quiet window for this tick: a forced baseline that did nothing doubles it (nextQuietN), anything else resets it
+const quietOf = (g, E, maxQ, capQ) => {
+  const qn = nextQuietN(g.quiet_n || 0, !!g.forced, g.forced ? actionsOf([...E.rec, ...E.run], g.run, endOf(E.run, g.run), bookkeepingIds(E.run)).length > 0 : false, maxQ, capQ);
+  return { qn, win: quietWindow(qn, maxQ, capQ) };
+};
+// the forced verdict: the baseline is older than the quiet window; mail the baseline was not launched with is named in why
+const forcedVerdict = (run, age, win, qn, fresh, mail) => ({ run: true, forced: true, quiet_n: qn, cls: wakeClass({ forced: true, changes: fresh }), mail,
+  why: `forced: last check-in ${run} ${Math.floor(age)} min ago (max quiet ${win})${fresh.length ? `; ${changed(fresh)}` : ''}` });
 
 /**
  * The gate verdict for one tick. o: { state, budget (machine: checkin_gate, checkin_max_quiet_min, max_*), policy (project:
- * iteration.wall_time_multiplier), live { band, rate_ok, rate_band, quiet }, now }. Returns { run: bool, why, forced? }.
+ * iteration.wall_time_multiplier, mail.checkin_take_min), live { band, rate_ok, rate_band, quiet }, now }. Returns { run: bool, why, forced?,
+ * mail (when it runs: the mail facts the check-in is launched with, for noteCheckin) }.
  */
 export function checkinGate(o) {
   const B = o.budget || {}, now = (o.now || new Date()).getTime();
-  if ((B.checkin_gate ?? GATE_DEFAULTS.checkin_gate) === false) return { run: true, why: 'gate off' };
-  const g = readGate(o.state);
-  if (!g?.run || !g.start) return { run: true, why: 'no earlier check-in seen by the gate' };
+  const g = readGate(o.state), { mail, fresh } = mailNews(o, g, now);
+  if ((B.checkin_gate ?? GATE_DEFAULTS.checkin_gate) === false) return { run: true, why: 'gate off', mail };
+  if (!g?.run || !g.start) return { run: true, why: 'no earlier check-in seen by the gate', mail };
   const E = loadEvents(o.state);
   const baseItem = fold(E.run).items[g.run];
-  if (!baseItem) return { run: true, why: `baseline ${g.run} not in runs.jsonl` };
+  if (!baseItem) return { run: true, why: `baseline ${g.run} not in runs.jsonl`, mail };
   const startMs = Date.parse(g.start), age = (now - startMs) / 60000, maxQ = Number(B.checkin_max_quiet_min ?? GATE_DEFAULTS.checkin_max_quiet_min);
   const capQ = Number(B.checkin_quiet_max_min ?? GATE_DEFAULTS.checkin_quiet_max_min);
   const esc = majorNeededOf(baseItem);
-  if (esc) return { run: true, cls: wakeClass({ escalated: true }), why: `escalated by ${g.run}: ${esc.slice(0, 120)}` };
-  const qn = nextQuietN(g.quiet_n || 0, !!g.forced, g.forced ? actionsOf([...E.rec, ...E.run], g.run, endOf(E.run, g.run), bookkeepingIds(E.run)).length > 0 : false, maxQ, capQ);
-  const win = quietWindow(qn, maxQ, capQ);
-  if (age > win) return { run: true, forced: true, quiet_n: qn, cls: wakeClass({ forced: true }), why: `forced: last check-in ${g.run} ${Math.floor(age)} min ago (max quiet ${win})` };
+  if (esc) return { run: true, cls: wakeClass({ escalated: true }), why: `escalated by ${g.run}: ${esc.slice(0, 120)}`, mail };
+  const { qn, win } = quietOf(g, E, maxQ, capQ);
+  if (age > win) return forcedVerdict(g.run, age, win, qn, fresh, mail);
   const fu = followUpOf(baseItem);
-  if (fu) return { run: true, cls: wakeClass({ followUp: true }), why: `follow-up asked by ${g.run}: ${fu.slice(0, 120)}` };
-  const r = compare(E, g.run, startMs, now, { caps: capsOf(B), baseCaps: g.caps, mult: Number(o.policy?.iteration?.wall_time_multiplier ?? 2),
-    live: o.live, baseLive: g.live, pausedFlip: g.paused_at && Date.parse(g.paused_at) > startMs, probes: o.probes, levelOf: o.levelOf });
-  return r.skip ? { run: false, why: `no change since ${g.run}` } : { run: true, cls: wakeClass(r), changes: r.changes, why: r.why };
+  if (fu) return { run: true, cls: wakeClass({ followUp: true }), why: `follow-up asked by ${g.run}: ${fu.slice(0, 120)}`, mail };
+  const changes = [...compare(E, g.run, startMs, now, { caps: capsOf(B), baseCaps: g.caps, mult: Number(o.policy?.iteration?.wall_time_multiplier ?? 2),
+    live: o.live, baseLive: g.live, pausedFlip: g.paused_at && Date.parse(g.paused_at) > startMs, probes: o.probes, levelOf: o.levelOf }), ...fresh];
+  return changes.length ? { run: true, cls: wakeClass({ changes }), changes, why: changed(changes), mail } : { run: false, why: `no change since ${g.run}` };
 }

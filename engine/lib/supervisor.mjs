@@ -461,7 +461,7 @@ function fallback(why) {
   logLine(`trial check-in ${spec.trial} ${why} -> fallback ${fb.executor} ${next}`);
   try {
     const g = readGate(state);
-    if (g?.run === run) noteCheckin(state, { run: next, start: loadState(state).items[next]?.created, live: g.live, budget: g.caps, forced: g.forced, quiet_n: g.quiet_n });
+    if (g?.run === run) noteCheckin(state, { run: next, start: loadState(state).items[next]?.created, live: g.live, budget: g.caps, forced: g.forced, quiet_n: g.quiet_n, mail: g.mail });
   } catch (e) { logLine(`gate baseline not moved: ${e.message}`); }
 }
 

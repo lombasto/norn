@@ -606,7 +606,7 @@ function tickPass(o, g = {}) {
       ...(o.hbMs ? { hbMs: o.hbMs } : {}), staleMs,
     });
     fs.writeFileSync(path.join(state, 'last-tick.txt'), start);
-    noteCheckin(state, { run: r.run, start: fold(readEvents(recordsFile(state, 'run'))).items[r.run]?.created || start, live, budget: B, forced: !!gate.forced, quiet_n: gate.quiet_n ?? 0 });
+    noteCheckin(state, { run: r.run, start: fold(readEvents(recordsFile(state, 'run'))).items[r.run]?.created || start, live, budget: B, forced: !!gate.forced, quiet_n: gate.quiet_n ?? 0, mail: gate.mail });
     const msg = `check-in ${r.run} ${executor} ${model} ${effort} supervisor pid ${r.pid} (gate: ${gate.cls ? gate.cls + ' ' : ''}${gate.why})`;
     tickLog(state, `${tag}: ${msg}`);
     return { code: 0, msg: `${tag}: ${s.line}; ${msg}` };

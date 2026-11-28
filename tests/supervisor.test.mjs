@@ -323,13 +323,13 @@ test('trial check-in: a non-DONE tick falls back to its fallback executor (fallb
   const d = sandbox();
   const ck = (brief, fb) => d.run(brief, { kind: 'checkin', lane: 'checkin', lock: false, notes: undefined, trial: 'codex-sol', fallback: fb });
   const id = ck('mode: crash\n', { executor: 'fake', model: 'claude-opus-5-5', effort: 'medium', brief: d.brief('mode: done\n') });   // the fake stands in for both executors
-  noteCheckin(d.state, { run: id, start: loadState(d.state).items[id].created, live: { band: 1 }, budget: { max_codex: 2 }, forced: true, quiet_n: 1 });
+  noteCheckin(d.state, { run: id, start: loadState(d.state).items[id].created, live: { band: 1 }, budget: { max_codex: 2 }, forced: true, quiet_n: 1, mail: ['mail:MAIL-1'] });
   assert.equal((await d.end(id)).data.outcome, 'crash');
   const fb = await waitFor(() => Object.values(loadState(d.state).items).find(i => i.kind === 'run' && i.data.fallback_of === id));
   assert.equal(fb.data.kind, 'checkin'); assert.equal(fb.data.model, 'claude-opus-5-5'); assert.equal(fb.data.trial, undefined);
   assert.equal((await d.end(fb.id)).data.outcome, 'done');
   const g = readGate(d.state);
-  assert.equal(g.run, fb.id); assert.deepEqual(g.live, { band: 1 }); assert.deepEqual(g.caps, { max_codex: 2 }); assert.equal(g.quiet_n, 1);
+  assert.equal(g.run, fb.id); assert.deepEqual(g.live, { band: 1 }); assert.deepEqual(g.caps, { max_codex: 2 }); assert.equal(g.quiet_n, 1); assert.deepEqual(g.mail, ['mail:MAIL-1']);
   const ok = ck('mode: done\n', { executor: 'fake' });
   await d.end(ok);
   await sleep(500);
