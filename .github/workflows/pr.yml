@@ -21,7 +21,7 @@ jobs:
   # the locked tool set tools/lint (npm ci --ignore-scripts) once per lock, and actions/cache carries it to the next run. META_ROOT
   # is set on the step because a job's env has no `runner` context and GitHub rejects the whole file for it (the PR check did not
   # run from 11-20 to this fix).
-  # Norn's Rust parts (slop: norn-code, the code graph the imports rules such as K10 read; smoke and tests: both, the picked tests can
+  # Norn's Rust parts (slop: norn-code, the code graph the imports rules such as K10 read; smoke and tests: all three, the picked tests can
   # hold the graph tests, slop-lang / slop-kinds, and the hook's): one step pattern in the three jobs,
   # Norn's own build (rustbin.mjs ensurePart: cargo build --release --locked into the clone's store <.git>/norn/rust, the binary named
   # by its source hash) with the runner's cargo (ubuntu-latest ships rustup; the repo pins no toolchain). actions/cache carries the
@@ -77,10 +77,10 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: .git/norn/rust/bin
-          key: rust-hook-code-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('engine/hook-rs/**', '!engine/hook-rs/target/**', 'engine/code-rs/**', '!engine/code-rs/target/**') }}
-      - name: Norn's Rust parts (norn-hook, norn-code) - ensurePart, built only on a cache miss
+          key: rust-hook-code-jobguard-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('engine/hook-rs/**', '!engine/hook-rs/target/**', 'engine/code-rs/**', '!engine/code-rs/target/**', 'engine/jobguard-rs/**', '!engine/jobguard-rs/target/**') }}
+      - name: Norn's Rust parts (norn-hook, norn-code, norn-jobguard) - ensurePart, built only on a cache miss
         env:
-          PARTS: hook code
+          PARTS: hook code jobguard
         shell: bash
         run: |
           cargo --version
@@ -107,10 +107,10 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: .git/norn/rust/bin
-          key: rust-hook-code-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('engine/hook-rs/**', '!engine/hook-rs/target/**', 'engine/code-rs/**', '!engine/code-rs/target/**') }}
-      - name: Norn's Rust parts (norn-hook, norn-code) - ensurePart, built only on a cache miss
+          key: rust-hook-code-jobguard-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('engine/hook-rs/**', '!engine/hook-rs/target/**', 'engine/code-rs/**', '!engine/code-rs/target/**', 'engine/jobguard-rs/**', '!engine/jobguard-rs/target/**') }}
+      - name: Norn's Rust parts (norn-hook, norn-code, norn-jobguard) - ensurePart, built only on a cache miss
         env:
-          PARTS: hook code
+          PARTS: hook code jobguard
         shell: bash
         run: |
           cargo --version
