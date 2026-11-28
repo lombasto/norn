@@ -1,5 +1,6 @@
-// jobguard (Rust prototype, RM-26 S6B Q1): the `run <ms> <cwd> <cmdline>` verb of engine/lib/jobguard.cs with its exact contract,
-// to measure whether a native helper saves start time per bounded git (bounded.mjs boundedSync). The child starts SUSPENDED, joins a
+// norn-jobguard (RM-26 S6B Q1): the `run <ms> <cwd> <cmdline>` verb of engine/lib/jobguard.cs with its exact contract, native: bounded.mjs
+// boundedSync / boundedAsync run their child through it on Windows when it is built (rustbin.mjs part jobguard; ~17 ms less per bounded
+// git than the C# helper, measured). `version` answers { crate, store_schema, source } as every part does (NORN-PART-PROOF). The child starts SUSPENDED, joins a
 // new KILL_ON_JOB_CLOSE job, then resumes: it and all it starts are in the job from birth. stdio is inherited. Exit = the child's code;
 // at <ms> "jobguard-timeout <ms> ms" on stderr, the job terminated, exit 124; a start failure "jobguard-err <message>", exit 127.
 // The job handle closes with this process, so whatever the child left behind dies at its exit or with this helper.
@@ -32,8 +33,16 @@ mod k32 {
     }
 }
 
-#[cfg(windows)]
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("version") {
+        println!("{{\"crate\":\"{}\",\"store_schema\":null,\"source\":\"{}\"}}", env!("CARGO_PKG_VERSION"), env!("NORN_SOURCE"));
+        return;
+    }
+    run()
+}
+
+#[cfg(windows)]
+fn run() {
     use k32::*;
     use std::io::Write;
     use std::os::windows::ffi::OsStrExt;
@@ -42,7 +51,7 @@ fn main() {
     let ms: Option<u32> = a.get(1).and_then(|s| s.to_str()).and_then(|s| s.parse().ok());
     let (ms, cwd, cmd) = match (a.len(), a.first().and_then(|s| s.to_str()), ms) {
         (4, Some("run"), Some(ms)) => (ms, &a[2], &a[3]),
-        _ => { println!("err usage: jobguard run <ms> <cwd> <cmdline>"); std::process::exit(2) }
+        _ => { println!("err usage: norn-jobguard run <ms> <cwd> <cmdline>"); std::process::exit(2) }
     };
     let err = |what: &str, code: u32| -> ! {
         let _ = writeln!(std::io::stderr(), "jobguard-err {what}: {}", std::io::Error::from_raw_os_error(code as i32));
@@ -87,4 +96,4 @@ fn main() {
 }
 
 #[cfg(not(windows))]
-fn main() { eprintln!("jobguard-err jobguard-rs is Windows only"); std::process::exit(127) }
+fn run() { eprintln!("jobguard-err norn-jobguard runs on Windows only"); std::process::exit(127) }

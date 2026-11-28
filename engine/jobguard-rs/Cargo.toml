@@ -1,11 +1,11 @@
 [package]
-name = "jobguard"
+name = "norn-jobguard"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
-# RM-26 S6B Q1 prototype: the `run` verb of engine/lib/jobguard.cs, native. std only (kernel32 declared by hand, as norn-hook keeps
-# to std): it builds with nothing but cargo, no registry fetch
+# the `run` verb of engine/lib/jobguard.cs, native (RM-26 S6B Q1; rustbin.mjs part jobguard, bounded.mjs's helper on Windows). std
+# only (kernel32 declared by hand, as norn-hook keeps to std): it builds with nothing but cargo, no registry fetch
 [dependencies]
 
 [profile.release]
