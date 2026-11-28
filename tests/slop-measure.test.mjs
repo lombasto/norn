@@ -29,9 +29,9 @@ const lines = (n, s = 'x') => Array.from({ length: n }, (_, i) => `const ${s}${i
 function fakeEslint(run, side, { texts }) {
   assert.equal(run.id, MEASURE_RUN.id);
   return JSON.stringify([...texts].map(([f, text]) => ({ filePath: f, messages: text.split('\n').flatMap((l, i) => {
-    const m = /function (\w+)\(.*\/\/ m c=(\d+) l=(\d+) d=(\d+) p=(\d+)/.exec(l);
+    const m = /function (\w*)\(.*\/\/ m c=(\d+) l=(\d+) d=(\d+) p=(\d+)/.exec(l);
     if (!m) return [];
-    const at = { line: i + 1, column: l.indexOf('function') + 1, endLine: i + 1, endColumn: l.indexOf('(') + 1 }, fn = `Function '${m[1]}'`;
+    const at = { line: i + 1, column: l.indexOf('function') + 1, endLine: i + 1, endColumn: l.indexOf('(') + 1 }, fn = m[1] ? `Function '${m[1]}'` : 'Function';
     return [{ ruleId: 'max-lines-per-function', message: `${fn} has too many lines (${m[3]}). Maximum allowed is 0.`, ...at },
       ...(Number(m[5]) ? [{ ruleId: 'max-params', message: `${fn} has too many parameters (${m[5]}). Maximum allowed is 0.`, ...at }] : []),
       { ruleId: 'complexity', message: `${fn} has a complexity of ${m[2]}. Maximum allowed is 0.`, ...at },
@@ -72,6 +72,29 @@ test('function ratchet anti-gaming: a new helper with one caller in the same fil
   const head = at(`export function main(a) { // m c=12 l=4 d=0 p=1\n  main2(a);\n  return a;\n}\nfunction main2(a) { // m c=14 l=3 d=0 p=1\n  return a;\n}\n`);
   const r = ratchets({ file: 'a.mjs', base, head });
   assert.deepEqual(r.filter(x => x.ratchet === 'function').map(x => [x.name, x.metrics]), [['main', { complexity: [22, 25] }]], 'main2 folds into main: 12 + 14 - 1');
+});
+
+test('function ratchet pairing: an anonymous or same-named function pairs with itself, not with its neighbour, when one is added or removed above it', () => {
+  const at = text => ({ text, fns: functionsOf(JSON.parse(fakeEslint(MEASURE_RUN, 'head', { texts: new Map([['a.mjs', text]]) }))[0].messages.map(m => ({ file: 'a.mjs', rule: m.ruleId, line: m.line, column: m.column, endLine: m.endLine, endColumn: m.endColumn, msg: m.message })), text) });
+  const anon = (word, c, l = 3) => `run(function (a) { // m c=${c} l=${l} d=0 p=1\n${Array.from({ length: l - 2 }, (_, i) => `  ${word}${i}(a);\n`).join('')}});\n`;
+  const fnr = r => r.filter(x => x.ratchet === 'function').map(x => [x.name, x.line, x.metrics]);
+  const big = anon('keep', 30, 5), small = anon('small', 2), other = anon('other', 26, 4);
+  assert.equal(at(small + big).fns.map(f => f.name).join(), '(anonymous),(anonymous)', 'the fake reports unnamed functions');
+  assert.deepEqual(fnr(ratchets({ file: 'a.mjs', base: at(other + big), head: at(small + other + big) })), [], 'one added above: the unchanged ones pair with themselves');
+  assert.deepEqual(fnr(ratchets({ file: 'a.mjs', base: at(small + other + big), head: at(other + big) })), [], 'one removed above: no ratchet');
+  assert.deepEqual(fnr(ratchets({ file: 'a.mjs', base: at(other + big), head: at(small + other + anon('keep', 32, 6)) })), [['(anonymous)', 8, { complexity: [30, 32] }]], 'a real growth keeps its own base number');
+  const cls = (n, c, l) => `class ${n} {\n  run(a) { // m c=${c} l=${l} d=0 p=1\n${Array.from({ length: l - 2 }, (_, i) => `    ${n}${i}(a);\n`).join('')}  }\n}\n`;
+  const meth = text => text.replace(/  run\(a\) \{/g, '  function run(a) {');   // the fake reads `function NAME(`: the same name twice in one file
+  assert.deepEqual(fnr(ratchets({ file: 'a.mjs', base: at(meth(cls('A', 22, 4) + cls('B', 25, 5))), head: at(meth(cls('B', 25, 5))) })), [], 'two methods run, the first removed: the other is not reported');
+});
+
+test('function ratchet pairing: two unnamed functions on one line pair with themselves by their numbers when one is added above', () => {
+  const fn = (n, line, complexity) => ({ name: '(anonymous)', key: `(anonymous)#${n}`, line, end: line, complexity, lines: 1, depth: 0, params: 1, statements: 1, extract: null });
+  const fnr = r => r.filter(x => x.ratchet === 'function').map(x => [x.name, x.line, x.metrics]);
+  const row = 'xs.filter(a => (a.p ? a.q : a.r)).map(b => b.id);', base = { text: `${row}\n`, fns: [fn(1, 1, 25), fn(2, 1, 2)] };
+  const head = c => ({ text: `ys.forEach(z => z());\n${row}\n`, fns: [fn(1, 1, 1), fn(2, 2, c), fn(3, 2, 2)] });
+  assert.deepEqual(fnr(ratchets({ file: 'a.mjs', base, head: head(25) })), [], 'unchanged, one added above: the neighbour on the same line is not its partner');
+  assert.deepEqual(fnr(ratchets({ file: 'a.mjs', base, head: head(27) })), [['(anonymous)', 2, { complexity: [25, 27] }]], 'a real growth keeps its own base number');
 });
 
 test('file ratchet: a file over 1,500 lines that grew by more than 20 net lines; 20 lines is no finding', () => {

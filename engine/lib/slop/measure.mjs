@@ -33,8 +33,9 @@ function blockSpan(code, line, column, end) {
   return [line, end];
 }
 /**
- * One file's ESLint messages of the measure run (parseEslint's shape) -> [{ name, key (name#n: the nth of that name, stable across
- * moves), line, end, complexity, lines, depth, params, statements, extract: [a, b] (the largest nested block: the extraction candidate) }]
+ * One file's ESLint messages of the measure run (parseEslint's shape) -> [{ name, key (name#n: the nth of that name, an id within this
+ * side only: the ratchet pairs base and head by `partners`, not by key), line, end, complexity, lines, depth, params, statements,
+ * extract: [a, b] (the largest nested block: the extraction candidate) }]
  */
 export function functionsOf(xs, text = '') {
   const by = new Map(), depth = [];
@@ -58,11 +59,26 @@ export function functionsOf(xs, text = '') {
 // ---------- the ratchets (SPEC 4.1 b, c and the anti-gaming row) ----------
 const excessOf = fns => fns.reduce((s, f) => s + Object.keys(CAPS).reduce((t, m) => t + Math.max(0, f[m] - CAPS[m]), 0), 0);
 const codeLines = text => (text || '').split('\n').filter(l => /\S/.test(l)).length;
-// a function new at head whose name is used once more in the file, inside another function, counts with that caller (main -> main2)
-function folded(fns, text, baseKeys) {
+// the base partner of each head function (head key -> base fn), within one name: a function whose body (its own lines, trimmed) is
+// unchanged pairs with itself wherever it moved; what is left pairs by the most body lines shared, then the nearest numbers (two unnamed
+// functions on one dense line share a body, and their ordinals shift when one is added above), then nearest in file order. Keying
+// by name#n alone paired the nth (anonymous) with whatever function now held that ordinal once one was added or removed above it.
+const bodyOf = (text, f) => text.split('\n').slice(f.line - 1, f.end).map(l => l.trim());
+function shared(a, b) { const n = new Map(); for (const l of b) n.set(l, (n.get(l) || 0) + 1); return a.filter(l => n.get(l) > 0 && n.set(l, n.get(l) - 1)).length; }
+const gap = (a, b) => ['complexity', 'statements', 'params', 'depth', 'lines'].reduce((s, m) => s + Math.abs((a[m] || 0) - (b[m] || 0)), 0);
+const side = (fns, text, name) => fns.filter(f => f.name === name).map((f, i) => { const body = bodyOf(text, f); return { f, i, body, joined: body.join('\n') }; });
+const byLikeness = (x, y) => y.same - x.same || y.shared - x.shared || x.gap - y.gap || x.far - y.far || x.h.i - y.h.i;
+function partners(bfns, btext, hfns, htext) {
+  const out = new Map(), taken = new Set(), names = [...new Set(hfns.map(f => f.name))];   // pairs never cross names, so one sort serves all
+  const pairs = names.flatMap(name => { const bs = side(bfns, btext, name); return side(hfns, htext, name).flatMap(h => bs.map(b => ({ h, b, same: +(h.joined === b.joined), shared: shared(h.body, b.body), gap: gap(h.f, b.f), far: Math.abs(h.i - b.i) }))); });
+  for (const p of pairs.sort(byLikeness)) if (!out.has(p.h.f.key) && !taken.has(p.b)) { out.set(p.h.f.key, p.b.f); taken.add(p.b); }
+  return out;
+}
+// a function new at head (no base partner) whose name is used once more in the file, inside another function, counts with that caller (main -> main2)
+function folded(fns, text, paired) {
   const code = maskClasses(text, ['code'], classify(text)), out = fns.map(f => ({ ...f })), gone = new Set();
   for (const f of out) {
-    if (baseKeys.has(f.key) || f.name === '(anonymous)' || usesOf(code, f.name) !== 2) continue;
+    if (paired.has(f.key) || f.name === '(anonymous)' || usesOf(code, f.name) !== 2) continue;
     const re = new RegExp(`(?<![\\w$])${f.name.replace(/\$/g, '\\$')}(?![\\w$])`, 'g'), lines = [...code.matchAll(re)].map(m => code.slice(0, m.index).split('\n').length).filter(l => l < f.line || l > f.end);
     const caller = lines.length === 1 && out.filter(g => g !== f && !gone.has(g) && g.line <= lines[0] && lines[0] <= g.end).sort((a, b) => (a.end - a.line) - (b.end - b.line))[0];
     if (!caller) continue;
@@ -78,17 +94,17 @@ const metricWords = ms => Object.entries(ms).map(([m, [b, h]]) => `${m} ${b ?? '
  * file whose summed excess over the caps grew (so splitting nothing off and shuffling cannot hide it).
  */
 export function ratchets({ file, base, head }) {
-  const out = [], bfns = base?.fns || [], bk = new Map(bfns.map(f => [f.key, f])), hfns = folded(head.fns || [], head.text || '', new Set(bk.keys()));
+  const out = [], { fns: bfns = [], text: bt = '' } = base || {}, ht = head.text || '', hf = head.fns || [], bk = partners(bfns, bt, hf, ht), hfns = folded(hf, ht, bk);
   for (const f of hfns) {
     const b = bk.get(f.key), ms = {};
-    for (const m of Object.keys(CAPS)) if (f[m] > CAPS[m] && (!b || b[m] <= CAPS[m] || f[m] > b[m])) ms[m] = [b ? b[m] : null, f[m]];
+    for (const m of Object.keys(CAPS)) { const bm = b ? b[m] : null; if (f[m] > CAPS[m] && !(bm > CAPS[m] && f[m] <= bm)) ms[m] = [bm, f[m]]; }   // null (new) is never over a cap
     if (!Object.keys(ms).length) continue;
     const ex = f.extract && f.extract[1] > f.extract[0] ? `; extract lines ${f.extract[0]}-${f.extract[1]} (its largest nested block)` : '';
     out.push({ ratchet: 'function', file, line: f.line, name: f.name, metrics: ms, msg: `function ${f.name} (${file}:${f.line}): ${metricWords(ms)}${ex}`, ...(ex ? { extract: f.extract } : {}), shadow: true });
   }
-  const bl = codeLines(base?.text), hl = codeLines(head.text);
+  const bl = codeLines(bt), hl = codeLines(ht);
   if (hl > FILE_CAP.lines && hl - bl > FILE_CAP.grew) out.push({ ratchet: 'file', file, line: 0, name: file, metrics: { lines: [bl, hl] }, msg: `file ${file}: ${num(bl)} -> ${num(hl)} code lines (over ${num(FILE_CAP.lines)}, grew by more than ${FILE_CAP.grew}): the split proposal`, shadow: true });
-  const be = excessOf(folded(bfns, base?.text || '', new Set(bfns.map(f => f.key)))), he = excessOf(hfns);
+  const be = excessOf(folded(bfns, bt, new Set(bfns.map(f => f.key)))), he = excessOf(hfns);
   if (he > be) out.push({ ratchet: 'excess', file, line: 0, name: file, metrics: { excess: [be, he] }, msg: `file ${file}: its summed excess over the function caps grew ${be} -> ${he}`, shadow: true });
   return out;
 }
