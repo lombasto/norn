@@ -97,6 +97,12 @@ test('the browser: the chevron opens the lane in place (the checklist), Esc clos
     await pg.ev(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
     assert.equal(await pg.ev(shown), false, 'Esc closes it');
     assert.equal(await pg.ev(`document.activeElement === document.querySelector('#lane-gen .lopen')`), true, 'the focus goes back to the chevron');
+    // CI-46032660949: a stream repaint after Esc (the hello's, or a new record) replaces the row; the focus stays on its chevron
+    await pg.ev(`window.__escRow = document.querySelector('#lane-gen')`);
+    record(f.pa.state, { kind: 'mail', ev: 'create', by: 'controller', data: { from: 'role:controller', to: 'lane:gen', subject: 'Owner: a scale bar', body: 'a scale bar' } });
+    assert.ok(await pg.until(`!document.contains(window.__escRow) && document.body.dataset.ready === 'lanes'`, 90000), 'the stream repaints Lanes after Esc');
+    assert.equal(await pg.ev(`document.activeElement === document.querySelector('#lane-gen .lopen')`), true, 'a repaint keeps the focus on the chevron');
+    assert.equal(await pg.ev(shown), false, 'and the row closed');
     await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
     await pg.go(`${f.url}/?project=kestrel&tab=lanes`);
     assert.ok(await pg.until(`document.body.dataset.ready === 'lanes' && !!document.querySelector('#lane-gen .lopen')`, 90000));
