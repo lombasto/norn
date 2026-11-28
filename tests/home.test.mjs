@@ -135,7 +135,7 @@ test('C2 /api/home on the fixture state: the thread file, runs, needs, the side 
     assert.ok(kinds.includes('you') && kinds.includes('controller') && kinds.includes('question') && kinds.includes('run-end') && kinds.includes('checkin'), kinds.join());
     assert.equal(d.needs_you, d.events.filter(e => e.cat === 'needs' && e.kind !== 'approval').length); assert.equal(d.approvals, 0);   // UX review 4: the Inbox's count (terms.mjs needsYou); approvals beside it
     assert.ok(!d.events.some(e => e.kind === 'unreviewed'), 'an unreviewed run is no needs-you row (Lanes shows it)');
-    assert.equal(d.status.running, false); assert.equal(d.status.ctx, 62000); assert.equal(d.status.handoff_k, 110); assert.equal(d.status.executor, 'claude');
+    assert.equal(d.status.running, false); assert.equal(d.status.ctx, 62000); assert.equal(d.status.handoff_k, 300); assert.equal(d.status.executor, 'claude');
     assert.ok(d.side.now.some(n => n.run === 'RUN-2' && n.state === 'running'));
     assert.ok(d.side.waiting.some(w => w.id === 'Q-1')); assert.ok(d.side.orders.some(o => o.text === 'keep going'));
     assert.ok(d.side.ruled.some(x => /which/.test(x.text)), 'a decision made today'); assert.equal(d.side.interval_min, 15);
