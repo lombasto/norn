@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
-# RM-26 S6B Q1 prototype: the `run` verb of engine/lib/jobguard.cs, native. windows-sys only (MIT / Apache-2.0)
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Console"] }
+# RM-26 S6B Q1 prototype: the `run` verb of engine/lib/jobguard.cs, native. std only (kernel32 declared by hand, as norn-hook keeps
+# to std): it builds with nothing but cargo, no registry fetch
+[dependencies]
 
 [profile.release]
 opt-level = 3
