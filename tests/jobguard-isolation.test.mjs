@@ -9,6 +9,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { mkTmp } from './helpers/tmp.mjs';
+import { boundedSync, runExe, jobguardExe, jobguardCached, winQuote } from '../engine/lib/bounded.mjs';
+import { ensurePart, binOf } from '../engine/lib/rustbin.mjs';
 
 const WIN = process.platform !== 'win32' && 'job objects: Windows only';
 const lib = f => JSON.stringify(new URL(`../engine/lib/${f}`, import.meta.url).href);
@@ -65,4 +67,44 @@ o.reaped = reapJob(inner, process.pid, { file: ${JSON.stringify(kills)} }).kille
   assert.ok(Number.isInteger(o.r?.pid) && o.r.breakaway === true, JSON.stringify(o.r));
   assert.equal(o.ran, true, 'the suspended child was resumed');
   assert.ok(Array.isArray(o.reaped) && !o.reaped.includes(o.r.pid), `not in the job it left: ${JSON.stringify(o.reaped)}`);
+});
+
+// RM-26 S6B: norn-jobguard (engine/jobguard-rs) is bounded.mjs's `run` helper on Windows once built; the C# helper runs `run` only
+// when the part cannot be had. Its contract beyond the prototype's checks: stdin reaches the child, and the helper killed mid-run
+// takes the child's tree down (KILL_ON_JOB_CLOSE: it holds the only job handle)
+const rs = () => { const r = ensurePart('jobguard'); return r.ok ? binOf('jobguard') : null; };
+const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+test('runExe: norn-jobguard when its file is built, the C# helper when it is not (a machine without cargo), none off Windows', () => {
+  assert.equal(runExe({ platform: 'linux', rs: process.execPath }), '', 'POSIX: no helper');
+  if (WIN) return;
+  const t = mkTmp('meta-jgrs-'), gone = path.join(t, 'norn-jobguard-000000000000.exe');
+  assert.equal(runExe({ rs: gone }), jobguardExe(), 'no part = the C# helper, compiled as before');
+  assert.equal(runExe({ rs: gone, compile: false }), jobguardCached() || '', 'off the event loop: only a cached C# helper');
+  assert.equal(runExe({ rs: process.execPath }), process.execPath, 'a built part is taken');
+  const r = boundedSync('cmd', ['/c', 'exit', '3'], { timeout: 20000, exe: runExe({ rs: gone }) });
+  assert.equal(r.status, 3, 'the C# helper runs `run`');
+});
+
+test('norn-jobguard: stdin input reaches the child byte for byte; boundedSync picks it by default once built', { skip: WIN }, () => {
+  const exe = rs();
+  assert.ok(exe, 'norn-jobguard builds (cargo)');
+  assert.equal(runExe(), exe, 'the default helper is the built part');
+  const input = 'Grüße € 日本語 🌊\nline 2\n';
+  const r = boundedSync(process.execPath, ['-e', 'process.stdin.pipe(process.stdout)'], { timeout: 20000, input });
+  assert.equal(r.status, 0, JSON.stringify(r.stderr)); assert.equal(r.stdout, input);
+});
+
+test('norn-jobguard killed mid-run: the child (its job) dies with it', { skip: WIN }, async () => {
+  const exe = rs(), t = mkTmp('meta-jgrs-'), pidFile = path.join(t, 'pid').split(path.sep).join('/');
+  assert.ok(exe, 'norn-jobguard builds (cargo)');
+  const cmd = [process.execPath, '-e', `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000)`].map(winQuote).join(' ');
+  const h = spawn(exe, ['run', '60000', '-', cmd], { stdio: 'ignore', windowsHide: true });
+  let child = 0;
+  for (let i = 0; i < 400 && !child; i++) { await new Promise(r => setTimeout(r, 25)); try { child = Number(fs.readFileSync(pidFile, 'utf8')); } catch { /* not yet */ } }
+  assert.ok(child > 0 && alive(child), 'the child runs under the helper');
+  const exited = new Promise(r => h.on('exit', r));
+  h.kill(); await exited;
+  for (let i = 0; i < 200 && alive(child); i++) await new Promise(r => setTimeout(r, 25));
+  assert.equal(alive(child), false, `child ${child} died with its helper`);
 });
