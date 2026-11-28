@@ -60,7 +60,7 @@ let files = [...new Set(globs.flatMap(g => fs.globSync(fwd(g))).map(fwd))].sort(
 if (!files.length) { console.error(`ci-suite: no test file matches ${globs.join(' ')}`); process.exit(2); }
 if (changed) {
   let diff;
-  try { diff = execFileSync('git', ['diff', '--name-only', '--relative', `${changed}...HEAD`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); }
+  try { diff = execFileSync('git', ['diff', '--name-only', '--relative', `${changed}...HEAD`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }); }
   catch (e) { console.error(`ci-suite: git diff ${changed}...HEAD failed: ${String(e.stderr || e.message).trim()}`); process.exit(2); }
   const paths = diff.split('\n').map(fwd).filter(Boolean);
   const read = f => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
@@ -104,7 +104,7 @@ const runFile = (name, f, i) => new Promise(resolve => {
   const t0 = Date.now();
   console.log(`ci-suite: start ${f}`);
   const child = spawn(process.execPath, ['--test', '--test-reporter=spec', '--test-reporter-destination=stdout',
-    `--test-reporter=${REPORTER}`, `--test-reporter-destination=${out}`, f], { env: { ...childEnv, TEMP: ft, TMP: ft, TMPDIR: ft, ...(census ? censusEnv(childEnv.NODE_OPTIONS, fwd(preload), cd) : {}) } });
+    `--test-reporter=${REPORTER}`, `--test-reporter-destination=${out}`, f], { env: { ...childEnv, TEMP: ft, TMP: ft, TMPDIR: ft, ...(census ? censusEnv(childEnv.NODE_OPTIONS, fwd(preload), cd) : {}) }, windowsHide: true });
   const buf = [];
   child.stdout.on('data', d => buf.push(d)); child.stderr.on('data', d => buf.push(d));
   let hung = false, ended = false;

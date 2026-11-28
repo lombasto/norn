@@ -453,6 +453,17 @@ export function liveRuns(state, { staleMs = STALE_MS, now = Date.now() } = {}) {
   for (const s of projectStates(state)) for (const it of runsOf(s)) if (it.state === 'running' && it.data.kind !== 'interactive' && (hbAge(s, it, now).age <= staleMs || hbLate(s, it, { now, staleMs, cpu: sweptCpu(s, { now }) }))) live.push({ ...it, state_dir: s });
   return live;
 }
+// the worker caps' count: liveRuns plus every running or stale-swept lost worker whose beat went quiet while a pid of it still lives
+// (endLost's rule) - its claude may still run, and under-dispatch beats over-dispatch (MAIL-b-34)
+function capRuns(state, { staleMs = STALE_MS, now = Date.now() } = {}) {
+  const live = liveRuns(state, { staleMs, now }), seen = new Set(live.map(r => `${r.state_dir}|${r.id}`));   // run ids repeat across projects
+  for (const s of projectStates(state)) for (const it of runsOf(s)) {
+    if (seen.has(`${s}|${it.id}`) || ['interactive', 'checkin'].includes(it.data.kind) || !(it.state === 'running' || (it.state === 'lost' && it.lost?.cause === 'stale'))) continue;
+    const hb = readJson(hbPath(s, it.id));
+    if ([hb?.supervisor_pid, hb?.pid, it.lost?.supervisor_pid].some(p => Number.isInteger(p) && p > 0 && !pidGone(p))) live.push({ ...it, state_dir: s });
+  }
+  return live;
+}
 // ---------- the crew (DWARVES.md 1.3): a lane's worker run takes a dwarf; Norn's own steps and helpers take none ----------
 export const takesDwarf = o => !['checkin', 'audit', 'interactive'].includes(o.kind) && o.role !== 'helper' && !isMergeStage(o.stage);
 // busy: the dwarf of every live run on this machine (sibling state dirs); past: every run a dwarf took (rule 2's preferences, norn crew)
@@ -535,7 +546,7 @@ export const mergeWorkers = budget => (Number.isInteger(budget?.merge_workers) &
 const MERGE_POOL = 'max_claude_workers';
 // the Claude pool split: lane = live non-landing runs, land = live landing runs (machine-wide, plus extra: the dry walk's pending starts)
 function claudePool(state, staleMs, extra = []) {
-  const live = [...liveRuns(state, { staleMs }), ...extra.map(data => ({ data }))].filter(it => it.data.kind !== 'checkin' && capsOfRun(it.data).includes(MERGE_POOL));
+  const live = [...capRuns(state, { staleMs }), ...extra.map(data => ({ data }))].filter(it => it.data.kind !== 'checkin' && capsOfRun(it.data).includes(MERGE_POOL));
   const land = live.filter(it => isLandingStage(it.data.stage)).length;
   return { lane: live.length - land, land };
 }
@@ -554,7 +565,7 @@ function capFull(o, staleMs, extra = [], { reserve = 0, waiting = 0 } = {}) {   
   const capOf = k => (Number.isInteger(o.budget?.[k]) ? o.budget[k] : typed ? capDefault(o.provider) : null);  // a typed executor always has a cap
   const caps = (infoOf(o).caps || []).filter(k => capOf(k) !== null);
   if (!caps.length) return null;
-  const live = [...liveRuns(o.state, { staleMs }), ...extra.map(data => ({ data }))].filter(it => it.data.kind !== 'checkin');
+  const live = [...capRuns(o.state, { staleMs }), ...extra.map(data => ({ data }))].filter(it => it.data.kind !== 'checkin');
   const landing = isLandingStage(o.stage), mw = mergeWorkers(o.budget);
   for (const k of caps) {
     if (k === MERGE_POOL) {

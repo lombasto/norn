@@ -26,7 +26,7 @@ export function cloneArgs(src, dst) {
   return ['clone', '--depth', '1', '--quiet', 'file://' + (abs.startsWith('/') ? '' : '/') + abs, dst];
 }
 export function cloneCommitted(src, dst) {
-  execFileSync('git', cloneArgs(src, dst), { stdio: ['ignore', 'ignore', 'pipe'] });
+  execFileSync('git', cloneArgs(src, dst), { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
 }
 const fwdS = p => p.split(path.sep).join('/');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -79,7 +79,7 @@ export async function smoke({ out = s => process.stdout.write(s + '\n'), err = s
     const env = sandboxEnv({ home, bin, cfg, root: M });
     const cli = path.join(M, 'engine', 'bin', 'norn.mjs'), PJ = path.join(M, 'projects', 'example', 'project.json');
     meta = (args, extra = {}) => {
-      const r = spawnSync(process.execPath, [cli, ...args], { env: { ...env, ...extra }, encoding: 'utf8', timeout: 30000 });
+      const r = spawnSync(process.execPath, [cli, ...args], { env: { ...env, ...extra }, encoding: 'utf8', timeout: 30000, windowsHide: true });
       return { code: r.status, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
     };
     const must = (args, extra, code = 0) => {
@@ -183,8 +183,8 @@ export async function smoke({ out = s => process.stdout.write(s + '\n'), err = s
     // 9. META-ONBOARD: a user's repo with a GitHub origin -> project new -> list -> remove (an edited installed file is kept)
     const repo = path.join(tmp, 'my-app');
     fs.mkdirSync(repo);
-    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo });
-    execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/someone/my-app.git'], { cwd: repo });
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo, windowsHide: true });
+    execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/someone/my-app.git'], { cwd: repo, windowsHide: true });
     const made = must(['project', 'new', '--root', repo, '--non-interactive']);
     const pf = (made.match(/project my-app: OK \((.+)\)$/m) || [])[1];
     if (!pf) throw new SmokeError('project new printed no OK line:\n' + made);
