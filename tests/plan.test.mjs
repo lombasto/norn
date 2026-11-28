@@ -2,8 +2,9 @@
 process.env.TZ = 'UTC';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPlan, holdWords, estimator, forecastOf, formatPlan } from '../engine/lib/plan.mjs';
+import { buildPlan, dayClock, labelOf, estimator, forecastOf } from '../engine/lib/plan.mjs';
 import { queueOf } from '../engine/lib/runs.mjs';
+import { waitWords } from '../engine/lib/waitwords.mjs';
 
 const NOW = Date.parse('2026-11-12T22:00:00Z');
 const T = min => new Date(NOW + min * 60000).toISOString();
@@ -30,7 +31,7 @@ test('Up next: every queued run in the fill order itself (queueOf, priority then
 
 test('hold-ups in plain words from the real walk terms (after / usage / resources / cap / not_before / question / worktree)', () => {
   const runs = [run(1, 'running', { lane: 'adopt', stage: 'A1' })];
-  const w = t => holdWords(t, { runs, now: NOW });
+  const w = t => waitWords(t, { label: id => labelOf({ ...runs.find(r => r.id === id).data, id }), now: NOW, clock: dayClock }).text;
   assert.equal(w('after run:RUN-1:merged unmet'), 'waits for Adopt A1 to merge');
   assert.equal(w('after run:RUN-1:done unmet'), 'waits for Adopt A1 to finish');
   assert.equal(w('usage: RATE_OK=0'), 'held: usage over the hourly cap');
