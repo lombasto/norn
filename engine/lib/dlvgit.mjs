@@ -46,7 +46,7 @@ export function globToRe(glob) {
 const branchRe = globs => globs.map(globToRe);
 
 /**
- * scanRepo(repo, { main, remote, cache, git, native, installed, history }) -> { mainSha, refs, branches(globs), tipOf(branch), info(branch, fallbackTip), onBase(commit, base),
+ * scanRepo(repo, { main, remote, cache, git, native, installed, history }) -> { mainSha, refs, branches(globs), tipOf(branch), info(branch, fallbackTip, doneMs), onBase(commit, base),
  *   rehearse(tip), rehearseMany(tips) (one merge-tree for every uncached tip; then rehearse() reads the cache), installed, history }
  * cache: a plain object (persisted by the caller), mutated in place. native: path globs (null = unknown). installed: commit ids.
  * history: commit-ish of EARLIER main lines (a repo whose main was restarted, e.g. moved to a new repo without its old history): a
@@ -126,12 +126,20 @@ export function scanRepo(repo, { main = 'main', remote = 'origin', cache = {}, g
     const pre = branch.slice(0, i + 1), rest = branch.slice(i + 1), hit = base => [...refs.keys()].find(k => { if (!k.startsWith(base + pre)) return false;
       const t = k.slice(base.length + pre.length), j = t.indexOf('/'); return j > 0 && /^[a-z][a-z0-9]{0,7}$/.test(t.slice(0, j)) && t.slice(j + 1) === rest; });
     const k = hit(`refs/remotes/${remote}/`) || hit('refs/heads/'); return k ? refs.get(k) : null; };
-  const info = (branch, fallbackTip = null) => {
-    const direct = refs.get(`refs/remotes/${remote}/${branch}`) || refs.get('refs/heads/' + branch) || null, ren = direct ? null : renamed(branch);
-    const ref = direct || (fallbackTip ? null : ren), tip = ref?.sha || fallbackTip || null;
+  // DLV-b-107 (DEC-a-682): a lane restarted on its old branch name left the remote copy at an old commit already on main; read first,
+  // it latched the deliverable merged while its DONE work sat off main. With a tip recorded at DONE a branch ref (remote, then local) is
+  // this deliverable's when it holds that work (it IS the tip, or the tip is its ancestor: later commits), or when it was rewritten after
+  // the DONE (diverged from the tip and committed after the DONE time: a hand landing rebases with edits and pushes). Any other ref is a
+  // stale copy of older work - an ancestor of the tip, or a diverged commit older than the DONE (an earlier round of a reused name,
+  // squashed onto main: its patches would read the new work merged) - and the tip is the DONE tip itself
+  const ownsWork = (r, doneTip, doneMs) => r.sha === doneTip || onBase(doneTip, r.sha) || (r.date > doneMs && !onBase(r.sha, doneTip));
+  const holding = (branch, doneTip, doneMs) => [refs.get(`refs/remotes/${remote}/${branch}`), refs.get('refs/heads/' + branch)].find(r => r && ownsWork(r, doneTip, doneMs)) || null;
+  const info = (branch, fallbackTip = null, doneMs = NaN) => {
+    const named = refs.get(`refs/remotes/${remote}/${branch}`) || refs.get('refs/heads/' + branch) || null, ren = named ? null : renamed(branch);
+    const ref = fallbackTip ? holding(branch, fallbackTip, doneMs) : named || ren, tip = ref?.sha || fallbackTip || null;
     const merged = onBase(tip, mainSha) || hist.some(h => onBase(tip, h));
     const installedHit = inst.some(s => onBase(tip, s));
-    const r = { branch, tip, ref_date: ref?.date ?? null, subject: ref?.subject ?? null, exists: !!(direct || ren), merged, installed: installedHit, behind: null, ahead: null, native: null, native_files: [] };
+    const r = { branch, tip, ref_date: ref?.date ?? null, subject: ref?.subject ?? null, exists: !!(named || ren), merged, installed: installedHit, behind: null, ahead: null, native: null, native_files: [] };
     if (tip && mainSha && !merged && !gone.has(tip)) {   // a gone tip has no counts (git cannot count it); a failed count is not kept
       const k = `${tip}:${mainSha}`;
       if (!c.counts[k]) {

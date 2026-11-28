@@ -109,8 +109,8 @@ const noScan = tip =>({ tip, exists: null, merged: false, installed: false, behi
  */
 export function judge(it, sc, { cfg, git, refresh = false }) {
   const d = it.data, s = sc.s, main = d.main || (sameRepo(d.repo, cfg.repo) ? cfg.main : 'main');
-  const tipAtDone = lastEv(it, ['done'])?.data?.tip || d.tip || null;
-  const g = s ? s.info(d.branch, tipAtDone) : noScan(tipAtDone);
+  const done = lastEv(it, ['done']), tipAtDone = done?.data?.tip || d.tip || null;
+  const g = s ? s.info(d.branch, tipAtDone, Date.parse(done?.ts || d.done_utc)) : noScan(tipAtDone);   // the DONE time: a ref rewritten after it counts
   const latch = mergeLatch(it);
   if (latch?.merged) {
     const m = latch.merged.data, installed = g.installed || !!(s && m.merge_commit && s.installed.some(b => s.onBase(m.merge_commit, b)));

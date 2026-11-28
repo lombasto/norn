@@ -9,6 +9,12 @@ import { stageArgs, isMergeRun, checkinPolicy } from './checkins.mjs';
 import { isWork } from './gate.mjs';
 import { LIVE, endTs, lanePathsFile } from './lifecycle.mjs';
 
+// DLV-a-237 (DEC-a-681, DEC-a-683): ci-fix lanes are reused and a check-in may not unarchive, so a DONE run can end on an archived lane: its
+// work newer than the lane's last archive takes the path to main (push, path row, PR); an archive after the run's end is the lane's closing
+// word (no git, no gh). The one rule of tickPaths and followerPrs (mergeland.mjs). l: the lane, r: its last work run.
+/** pathLane(l, r) -> true when the lane's last work run r is on the path to main: active / done lanes, an archived one only after its archive */
+export const pathLane = (l, r) => ['active', 'done'].includes(l.state) || (l.state === 'archived' && (r.history.findLast(h => h.ev === 'end')?.ts ?? '') > (l.history.findLast(h => h.ev === 'archive')?.ts ?? ''));
+
 /**
  * The tick's step. o: { project (file, root, briefs_dir, policy, deliverables.main, merge.gate.fast), now (ms), git, cli (args) -> { code, out }
  * (the meta CLI; none = nothing can be queued), dry }. Writes lane-paths.json; -> [{ id, act: pushed | staged | at_risk | stuck, note }]
@@ -22,10 +28,10 @@ export function tickPaths(state, { project: p = {}, now = Date.now(), git = make
   for (const r of Object.values(st.items)) if (r.kind === 'run' && r.data?.lane && isWork(r.data)) (byLane[r.data.lane] ??= []).push(r);
   const paths = {}, out = [];
   for (const l of Object.values(st.items)) {
-    if (l.kind !== 'lane' || !['active', 'done'].includes(l.state)) continue;
+    if (l.kind !== 'lane') continue;
     const name = laneName(l.id, state), runs = (byLane[name] || []).sort((a, b) => runNum(a.id) - runNum(b.id));
     const work = runs.filter(x => !isMergeRun(x.data)), r = work.at(-1);
-    if (!r || work.some(x => LIVE.includes(x.state)) || r.state !== 'exited' || r.end?.outcome !== 'done') continue;
+    if (!r || work.some(x => LIVE.includes(x.state)) || r.state !== 'exited' || r.end?.outcome !== 'done' || !pathLane(l, r)) continue;
     const branch = r.end?.branch || r.data.branch, wt = r.data.worktree && fs.existsSync(r.data.worktree) ? r.data.worktree : null, dir = wt || p.root;
     if (!branch || branch === main || !dir) continue;
     const tip = git(dir, ['rev-parse', '--verify', '-q', `refs/heads/${branch}`], { allowFail: true })?.trim() || r.end?.head;
