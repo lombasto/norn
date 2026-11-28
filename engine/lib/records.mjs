@@ -843,14 +843,31 @@ function firstWriter(kind, target) {
     + `${d.via ? ` via ${d.via}` : ''}${refs ? ` (${refs})` : ''} at ${h.ts}`;
 }
 
-// Check one event against the state; returns the full envelope (without seq / ts).
-function check(st, { kind, ev, id, by, data = {} }, { pfx = null, home = null } = {}) {
+/** the stage of a run that reviews a stuck roadmap item's approach (stuck.mjs: never a round; its decision is the way out) */
+export const REVIEW_STAGE = 'APPROACH-REVIEW';
+// DEC-a-682 item 5: the one exception to the role table. A stuck item waits for an approach review (stuck.mjs reviewOf), and the review
+// runs as a worker: without this its verdict sat in its notes until a person recorded it. So a worker run of stage APPROACH-REVIEW may
+// create exactly one decision, carrying approach_review; every other worker write stays refused. true = allowed; a refusal says why.
+function reviewerDecision(st, kind, ev, by, data, run, runOf) {
+  if (kind !== 'decision' || ev !== 'create' || by !== 'worker') return false;
+  const no = why => fail(`role worker may record one decision, only from stage ${REVIEW_STAGE} with --approach-review RM-n: ${why}`);
+  if (!run) no('this write carries no run id');
+  const stage = String(runOf(run)?.data?.stage ?? '').toUpperCase();
+  if (stage !== REVIEW_STAGE) no(`${run} is ${stage ? 'stage ' + stage : 'no run with a stage'}`);
+  if (data?.approach_review === undefined) no('no --approach-review');
+  const prev = Object.values(st.items).find(i => i.kind === 'decision' && i.run === run);
+  if (prev) no(`${run} already recorded ${prev.id}`);
+  return true;
+}
+
+// Check one event against the state; returns the full envelope (without seq / ts). run / runOf: the writing run and its lookup (reviewerDecision).
+function check(st, { kind, ev, id, by, data = {} }, { pfx = null, home = null, run = null, runOf = () => null } = {}) {
   const k = KINDS[kind];
   if (!k) fail(`unknown kind ${JSON.stringify(kind)} (question | decision | directive | lane | run | mail)`);
   const def = k.events[ev];
   if (!def) fail(`unknown event ${kind} ${JSON.stringify(ev)} (${Object.keys(k.events).join(' | ')})`);
   if (!ROLES.includes(by)) fail(`unknown role ${JSON.stringify(by)} (${ROLES.join(' | ')})`);
-  if (by !== 'migration' && !def.roles.includes(by)) fail(`role ${by} may not ${kind} ${ev} (allowed: ${def.roles.join(', ')})`);
+  if (by !== 'migration' && !def.roles.includes(by) && !reviewerDecision(st, kind, ev, by, data, run, runOf)) fail(`role ${by} may not ${kind} ${ev} (allowed: ${def.roles.join(', ')})`);
   if (data === null || typeof data !== 'object' || Array.isArray(data)) fail('data must be an object');
   let target = null;
   if (def.from === null) {
@@ -1056,7 +1073,8 @@ function recordCtx(stateDir, evIn, opts) {
       return isoSec(new Date(t));
     };
     // META-CONTROLLER C4: the lanes (and their holds) live in records.jsonl; a run / deliverable write reads them from there
-    let lanes = null;
+    let lanes = null, runs = null;
+    const runOf = id => (runs ??= loadShared(stateDir, 'run').items)[id];   // DEC-a-682 item 5: a worker's decision names its run's stage
     const laneItems = () => (KINDS[kind].file === 'records' ? st.items : (lanes ??= loadShared(stateDir, 'lane').items));
     const push = e => {
       if (e.by === 'checkin') {
@@ -1067,7 +1085,7 @@ function recordCtx(stateDir, evIn, opts) {
       // SPEC 3.8: each home's check-ins (and controller) act only on its own lanes
       const ln = home && CK.includes(e.by) ? laneOfEvent(e, st, home.id) : null, lh = ln ? homePart(ln) : null;
       if (lh && lh !== home.id) fail(`L:${ln} belongs to home ${lh}: a ${e.by} acts only on the lanes of its own home (${home.id})`);
-      const c = check(st, e, ids), def = KINDS[c.kind].events[c.ev], to = typeof def.to === 'function' ? def.to(c.data) : def.to;
+      const c = check(st, e, { ...ids, run, runOf }), def = KINDS[c.kind].events[c.ev], to = typeof def.to === 'function' ? def.to(c.data) : def.to;
       const p = hs && c.ev !== createEv(c.kind) ? primaryOf(st.items[c.id], home.bare_home) : home?.id;
       if (hs && p !== home.id) {
         const twin = (st.pending[c.id] || []).find(x => x.ev === c.ev);
