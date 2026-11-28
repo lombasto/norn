@@ -1,6 +1,7 @@
 // Norn's Rust parts, built one way (SPEC code-graph 3.2). RUST_PARTS is the one table: norn-hook (engine/hook-rs; hook-fast S1, owner
-// 2026-11-20: a claude run's PostToolUse mail hook and PreToolUse scope hook, which answer "nothing to do" without starting Node) and
-// norn-code (engine/code-rs; the code graph, docs/code-graph.md). Each binary is named by its SOURCE CONTENT and kept in one store
+// 2026-11-20: a claude run's PostToolUse mail hook and PreToolUse scope hook, which answer "nothing to do" without starting Node),
+// norn-code (engine/code-rs; the code graph, docs/code-graph.md) and norn-jobguard (engine/jobguard-rs; RM-26 S6B: the `run` helper
+// of bounded.mjs on Windows, handed to it below). Each binary is named by its SOURCE CONTENT and kept in one store
 // that every checkout of this clone shares (NORN-RUST-FRESH, the measured choice: a cold norn-code is ~4 min and 166 MB of target/,
 // too much per lane worktree): <git common dir>/norn/rust/bin/<bin>-<source sha12>[.exe], built by `cargo build --release --locked`
 // (the committed Cargo.lock is what gets built; cargo's `clean -p` of the package first) into the store's one target dir per part,
@@ -19,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { fwd, pathKey } from './config.mjs';
 import { which } from './paths.mjs';
 import { linuxFamily } from './prereqs.mjs';
-import { boundedAsync } from './bounded.mjs';
+import { boundedAsync, useRunHelper } from './bounded.mjs';
 import { withLock, withLockAsync } from './records.mjs';
 
 const ENGINE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -27,6 +28,7 @@ export const META_BIN = path.join(ENGINE, 'bin', 'norn.mjs');
 export const RUST_PARTS = {
   hook: { dir: 'hook-rs', bin: 'norn-hook', why: 'the per-tool-call hooks of every claude run', cc: false },
   code: { dir: 'code-rs', bin: 'norn-code', why: 'the code graph (docs/code-graph.md)', cc: true },
+  jobguard: { dir: 'jobguard-rs', bin: 'norn-jobguard', why: 'the run helper of every bounded child on Windows (bounded.mjs)', cc: false, with: 'hook' },
 };
 /** the store schema this engine reads; `norn-code version` must print the same, or the binary is not this engine's */
 export const CODE_STORE_SCHEMA = 5;
@@ -77,6 +79,9 @@ const PINNED = {};
 const hashOf = (p, src) => (pathKey(src) === pathKey(srcOf(p)) ? (PINNED[p] ??= sourceHash(src)) : sourceHash(src));
 /** the binary of part `p` for the sources in `src` (default: this engine's), in store `st` */
 export const binOf = (p, { src = srcOf(p), store: st = store() } = {}) => path.join(st, 'bin', `${part(p).bin}-${hashOf(p, src)}${EXE}`);
+// bounded.mjs is a leaf (the git modules import it), so it cannot import this module: it is handed this engine's norn-jobguard here.
+// A process that loads Norn's CLI loads this module, so its bounded children run under the native helper once that is built
+useRunHelper(() => binOf('jobguard'));
 /** the command a BLOCK names: the build ensurePart runs (it then copies target/release/<bin> to binOf) */
 export const buildOf = (p, { src = srcOf(p), store: st = store() } = {}) =>
   `cargo build --release --locked --target-dir "${fwd(targetOf(p, st))}" --manifest-path "${fwd(path.join(src, 'Cargo.toml'))}"`;
@@ -214,10 +219,11 @@ export async function ensurePartAsync(p, { cargo = (args, timeout) => boundedAsy
  *  worktree holds. The supervisor (run start, run end) and `norn done` (its stored check) build norn-code on it; `rules` is the check's */
 export const graphReads = (rules, worktree) => rules.some(r => r.kind === 'imports' && r.roots?.some(x => fs.existsSync(path.join(worktree, x))));
 
-/** the parts a run reads -> [{ p, src, store, exe }]: `parts` of this engine, and every part of the worktree's own engine when the
- *  worktree is a checkout of Norn that is not this engine's (its tests import that engine); one entry per binary */
+/** the parts a run reads -> [{ p, src, store, exe }]: `parts` of this engine (each with the parts built `with` it: norn-hook brings
+ *  norn-jobguard), and every part of the worktree's own engine when the worktree is a checkout of Norn that is not this engine's (its
+ *  tests import that engine); one entry per binary */
 export function partsOf({ parts = Object.keys(RUST_PARTS), worktree = null } = {}) {
-  const out = parts.map(p => ({ p, src: srcOf(p), store: store() }));
+  const out = parts.flatMap(p => [p, ...Object.keys(RUST_PARTS).filter(q => RUST_PARTS[q].with === p)]).map(p => ({ p, src: srcOf(p), store: store() }));
   const eng = worktree ? path.join(path.resolve(worktree), 'engine') : null;
   if (eng && pathKey(eng) !== pathKey(ENGINE)) for (const p of Object.keys(RUST_PARTS)) if (fs.existsSync(path.join(srcOf(p, eng), 'Cargo.toml'))) out.push({ p, src: srcOf(p, eng), store: storeOf(eng) });
   const seen = new Set();
