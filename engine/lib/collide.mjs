@@ -3,7 +3,7 @@
 // no clock but the `now` a caller passes. intents.mjs gathers the intents; `norn collide plan` prints what this returns.
 //   intent = { lane, run, stage, state: new | queued | running | unlanded, since (ms), role: work | landing | review | helper | none,
 //              items: [RM-n], part_of, scope: [globs] | [] (Scope: none) | null (not readable), exclusive: [globs], touched: [paths],
-//              commits, branch, tip, dlv, stacked_on: [{ lane, n }], names: { runs, dlvs, lanes }, tests, done, brief }
+//              commits, branch, tip, dlv, stacked_on: [{ lane, n }], names: { runs, dlvs, lanes, declared (from its Builds on: line) }, tests, done, brief }
 // Kinds built here: item, territory (grades exclusive > conflict > same-files > covers > scopes, the commons dropped; conflict from the tick's merge-tree), order (stacked, planned, named), stale
 // (a caveat that names a dead run as running; dead = the proof of death of SPEC 4A.1, of a run and of a lane). First come: a hold only
 // from an intent ahead. S1c: the land-first wait (a hold that ends by itself), the caveat suffix. S2a: the remedy menu and who may apply
@@ -114,9 +114,12 @@ function order(me, o, items) {
     if (i > 0 && j >= 0 && j < i) out.push({ grade: 'planned', after: condOf(o), why: `${id} plans stage ${me.stage} after ${o.stage}; lane ${o.lane}'s ${o.stage} has not merged (${held(o)})` });
   }
   const n = me.names || {}, named = [o.run && n.runs?.includes(o.run) && o.run, o.dlv && n.dlvs?.includes(o.dlv) && o.dlv, n.lanes?.includes(o.lane) && `lane ${o.lane}`].filter(Boolean);
-  if (named.length && !out.length) out.push({ grade: 'named', after: condOf(o), why: `the brief names ${named.join(', ')} (${held(o)})` });
+  if (named.length && !out.length) out.push({ grade: 'named', after: condOf(o), why: namedWhy(n, named, o) });
   return out;
 }
+/** the why of a named order: DEC-a-683, a declared name says so; a guessed one (a search of the text) names the way out for a brief that only cites the work */
+const namedWhy = (n, named, o) => n.declared ? `the brief builds on ${named.join(', ')} (its Builds on: line): ${held(o)}`
+  : `the brief names ${named.join(', ')} (${held(o)}); if the brief only cites it, add the line "Builds on: none"`;
 
 // ---------- the pair rulings (SPEC 4A.2): wait and allow, the only records the judge reads ----------
 /** the key of an unordered lane pair */

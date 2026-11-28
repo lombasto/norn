@@ -1,22 +1,23 @@
 // The Ready lines of a brief (META-DOD 1): Scope: / Tests: / Done:, the optional Exclusive: (lane-collide S1a: the files the run moves,
-// renames, splits or rewrites wholesale), and whether a path is inside Scope. A leaf module: the Ready gate (dod.mjs), the run scope
+// renames, splits or rewrites wholesale), the optional Builds on: (DEC-a-683: the open work the brief builds on; none = only cites), and whether a path is inside Scope. A leaf module: the Ready gate (dod.mjs), the run scope
 // guard (scope.mjs, META-DOD 2) and the collision model (collide.mjs) read it.
 const KEYS = ['Scope', 'Tests', 'Done'];
 const fwd = p => String(p).replace(/\\/g, '/');
 /** a Ready-line word without its quotes / backticks / trailing punctuation */
 export const clean = w => w.replace(/^[`'"(]+|[`'")]+$/g, '').replace(/[.,;:]+$/, '').replace(/[`'")]+$/, '');
 
-/** the Ready lines of a brief text: { scope: [path | glob], exclusive: [path | glob], tests, done, missing: ['Tests:', ..] } (first line
- *  of each key wins; Exclusive: is never missing) */
+/** the Ready lines of a brief text: { scope: [path | glob], exclusive: [path | glob], builds_on: null (no line) | [] (none) | [word],
+ *  tests, done, missing: ['Tests:', ..] } (first line of each key wins; Exclusive: and Builds on: are never missing) */
 export function parseReady(text) {
   const got = {};
   for (const l of String(text ?? '').split(/\r?\n/)) {
-    const m = l.match(/^\s*(?:[-*]\s+)?(Scope|Tests|Done|Exclusive):[ \t]*(.*?)\s*$/);
+    const m = l.match(/^\s*(?:[-*]\s+)?(Scope|Tests|Done|Exclusive|Builds on):[ \t]*(.*?)\s*$/);
     if (m && !(m[1] in got)) got[m[1]] = m[2];
   }
   const words = k => (got[k] ?? '').split(/[\s,]+/).map(clean).filter(Boolean), scope = words('Scope');
   const missing = KEYS.filter(k => !(k === 'Scope' ? scope.length : (got[k] ?? '').trim())).map(k => k + ':');
-  return { scope, exclusive: words('Exclusive'), tests: got.Tests ?? null, done: got.Done ?? null, missing };
+  const on = 'Builds on' in got ? words('Builds on') : null, builds_on = on && /^none$/i.test(on[0] ?? '') ? [] : on;
+  return { scope, exclusive: words('Exclusive'), builds_on, tests: got.Tests ?? null, done: got.Done ?? null, missing };
 }
 
 const globRe = g => new RegExp('^' + g.split(/(\*\*\/|\*\*|\*|\?)/).map(t => t === '**/' ? '(?:.*/)?' : t === '**' ? '.*' : t === '*' ? '[^/]*' : t === '?' ? '[^/]'
