@@ -68,6 +68,23 @@ test('a check-in\'s --worktree / --notes must lie inside the project\'s folders;
   assert.equal(r.code, 0, r.out); assert.match(r.out, /QUEUED/);
 });
 
+// DEC-a-683: a relative --worktree is the caller's folder, as --brief / --notes; the supervisor runs elsewhere and spawned in a cwd
+// that did not exist there (`spawn <exe> ENOENT`)
+test('a relative --worktree is resolved against the caller: the run starts and queues with the absolute folder and ends as its executor', () => {
+  const d = sandbox(), env = { ...process.env, META_ROOT: d.t, META_ROLE: '', META_PROJECT: '', META_STATE: '', META_RUN_ID: '', META_NO_TICK: '1' };
+  const cli = args => spawnSync(process.execPath, [NORN, 'run', '--executor', 'fake', '--project', d.project, '--state', d.state, '--brief', d.brief, '--worktree', 'wt', '--no-tick', ...args],
+    { cwd: d.t, encoding: 'utf8', windowsHide: true, env });
+  const recOf = lane => Object.values(loadState(d.state).items).find(i => i.kind === 'run' && i.data.lane === lane);
+  const q = cli(['--lane', 'later', '--after', `run:${d.gate}:done`]);
+  assert.equal(q.status, 0, q.stdout + q.stderr); assert.match(q.stdout, /QUEUED/);
+  assert.equal(recOf('later').data.worktree, d.wt, 'the queue record keeps the absolute worktree (its fill runs from the tick\'s folder)');
+  const r = cli(['--lane', 'work', '--wait']), out = r.stdout + r.stderr;
+  assert.match(out, /STARTED/); assert.doesNotMatch(out, /ENOENT/);
+  const it = recOf('work');
+  assert.equal(it.data.worktree, d.wt); assert.ok(path.isAbsolute(it.data.worktree));
+  assert.equal(it.end?.outcome, 'done', JSON.stringify(it.end)); assert.equal(it.end.error, undefined); assert.equal(r.status, 0, out);
+});
+
 test('the value lists: typed executors join, disabled ones leave; a Claude model the budget names is known; fake / typed models are free', () => {
   const p = { executors: { glm: { type: 'claude-compatible', base_url: 'https://x', api_key_env: 'K', model: 'glm-5' }, old: { type: 'cli', exe: 'x', model: 'm', enabled: false }, 'codex-astra': { enabled: false } } };
   assert.deepEqual(knownExecutors(p), ['claude', 'fake', 'codex-sol', 'glm']);
